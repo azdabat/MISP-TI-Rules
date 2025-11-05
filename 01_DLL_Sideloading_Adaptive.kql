@@ -1,0 +1,174 @@
+// =====================================================================
+// DLL Sideloading & Suspicious ImageLoad (Supply-chain aware, Adaptive)
+// Author: Ala Dabat
+// Purpose:
+//   • Find DLL image loads in vendor binaries where signature/path looks okay
+//     but behavior + prevalence are suspicious (supply-chain aware).
+//   • Correlate with recent file creation, LOLBAS execution, driver drops, and C2.
+//   • Use MISP/OpenCTI via ThreatIntelligenceIndicator for TLP/Confidence scoring.
+//   • Support delayed-load evasion (minutes → days).
+// MITRE:
+//   • T1574.002 (DLL Search Order Hijacking)
+//   • TA0003 Persistence, TA0005 Defense Evasion, TA0011 Command & Control
+// Scoring model:
+//   FinalScore = (DetectionSignal * 0.4) + (IntelConfidence * 0.3)
+//              + (KillChainRelevance * 0.2) + (TemporalScore * 0.1)
+// Hunter directives embedded per score band.
+// =====================================================================
+
+let lookback         = 14d;
+let prevalenceWindow = 90d;
+
+// Vendor processes to pay attention to (expand per org)
+let vendorProcs = dynamic(["3cx.exe","vendor.exe","SolarWinds.BusinessLayerHost.exe"]);
+
+// Prevalence org-wide (rarity == suspicious)
+let OrgPrevalence =
+DeviceFileEvents
+| where Timestamp >= ago(prevalenceWindow)
+| summarize SeenDeviceCount = dcount(DeviceId) by SHA256, FileName;
+
+// Image loads of DLLs into vendor processes
+let ImageLoads =
+DeviceImageLoadEvents
+| where Timestamp >= ago(lookback)
+| where ProcessFileName has_any (vendorProcs)
+| where FileName endswith ".dll"
+| extend ImageSHA256 = coalesce(SHA256, tostring(ImageHash))
+| extend LoaderProc = ProcessFileName, LoaderPID = ProcessId
+| project ImageLoadTime = Timestamp, DeviceName, DeviceId,
+          LoaderProc, LoaderPID, ImageFileName=FileName, ImageSHA256,
+          SignatureStatus, Signer, ReportId;
+
+// Recent DLL creates (catch immediate & delayed loads)
+let RecentCreates =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName endswith ".dll"
+| extend FileSHA256 = SHA256
+| project FileCreateTime = Timestamp, DeviceName, DeviceId, FolderPath,
+          FileName, FileSHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine;
+
+// Build candidate suspicious image-loads
+let SuspiciousImages =
+ImageLoads
+| join kind=leftouter (OrgPrevalence) on $left.ImageSHA256 == $right.SHA256
+| join kind=leftouter (RecentCreates) on $left.DeviceId == $right.DeviceId and $left.ImageSHA256 == $right.FileSHA256
+| extend CreatedSecondsBeforeLoad =
+    iff(isnotempty(FileCreateTime),
+        datetime_diff('second', ImageLoadTime, FileCreateTime) * -1,
+        long(-1))
+| extend
+    RareIndicator               = iif(SeenDeviceCount <= 2 or isnull(SeenDeviceCount), 1, 0),
+    NewFile_ImmediateLoad       = iif(CreatedSecondsBeforeLoad >= 0 and CreatedSecondsBeforeLoad <= 300, 1, 0),     // ≤5 min
+    NewFile_DelayedLoad_Short   = iif(CreatedSecondsBeforeLoad > 300 and CreatedSecondsBeforeLoad <= 86400, 1, 0),  // 5 min–24h
+    NewFile_DelayedLoad_Long    = iif(CreatedSecondsBeforeLoad > 86400 and CreatedSecondsBeforeLoad <= 604800, 1, 0), // 1–7 days
+    UnsignedOrUntrusted         = iif(SignatureStatus != "Signed" or isnull(Signer), 1, 0)
+| extend DetectionSignal =
+      (RareIndicator * 1)
+    + (NewFile_ImmediateLoad * 2)
+    + (NewFile_DelayedLoad_Short * 1)
+    + (NewFile_DelayedLoad_Long * 1)
+    + (UnsignedOrUntrusted * 1)
+| where DetectionSignal >= 1
+| project ImageLoadTime, DeviceName, DeviceId, LoaderProc, LoaderPID,
+          ImageFileName, ImageSHA256, SignatureStatus, Signer, SeenDeviceCount,
+          CreatedSecondsBeforeLoad, DetectionSignal, ReportId;
+
+// Driver drops (.sys) near the load time
+let DriverDrops =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName endswith ".sys"
+   or FolderPath has_any (dynamic(["\\drivers\\","\\system32\\drivers\\"]))
+| project DriverTime = Timestamp, DeviceName, DeviceId,
+          SysFile = FileName, SysSHA256 = SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine;
+
+// LOLBAS execution after load
+let SuspiciousExec =
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| where (FileName in ("rundll32.exe","regsvr32.exe") and ProcessCommandLine has_any (dynamic(["http://","https://",".sct","/i:"])))
+   or (FileName in ("bitsadmin.exe","certutil.exe","powershell.exe","curl.exe","wget.exe")
+       and ProcessCommandLine has_any (dynamic(["-enc","-encodedcommand","invoke-webrequest","downloadfile","-url","http://","https://"])))
+| project ExecTime = Timestamp, DeviceName, DeviceId, FileName,
+          ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+
+// Network correlation + TI (MISP/OpenCTI) on IP/Domain/URL
+let NetCorrel =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemoteIP !in~ ("127.0.0.1","::1")
+  and not(startswith(RemoteIP,"10.") or startswith(RemoteIP,"192.168.") or startswith(RemoteIP,"172."))
+| extend RemoteDomain = tostring(parse_url(RemoteUrl).Host)
+| project NetTime = Timestamp, DeviceName, DeviceId, RemoteIP, RemotePort, RemoteUrl, RemoteDomain,
+          NetProc = InitiatingProcessFileName, NetCmd = InitiatingProcessCommandLine
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("IP","DomainName","URL")
+    | project TI_Indicator = Indicator, IndicatorType, ConfidenceScore, TlpLevel, ThreatType
+) on $left.RemoteIP == $right.TI_Indicator
+   or $left.RemoteDomain == $right.TI_Indicator
+   or $left.RemoteUrl == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(ConfidenceScore, 50)),
+         TlpLevel        = coalesce(TlpLevel, "TLP:WHITE"),
+         ThreatType      = coalesce(ThreatType, "Unknown")
+| extend VT_Link = strcat("https://www.virustotal.com/gui/ip-address/", RemoteIP);
+
+// Join everything
+let Correlated =
+SuspiciousImages
+| join kind=leftouter (SuspiciousExec) on DeviceId
+| where isnull(ExecTime) or (ExecTime between (ImageLoadTime .. ImageLoadTime + 1h))
+| join kind=leftouter (DriverDrops) on DeviceId
+| where isnull(DriverTime) or (DriverTime between (ImageLoadTime .. ImageLoadTime + 2h))
+| join kind=leftouter (NetCorrel) on DeviceId
+| where isnull(NetTime) or (NetTime between (ImageLoadTime .. ImageLoadTime + 2h))
+| extend BehaviorScore =
+    DetectionSignal
+  + iif(isnotempty(ExecTime), 2, 0)
+  + iif(isnotempty(DriverTime), 1, 0)
+  + iif(isnotempty(RemoteIP) or isnotempty(RemoteDomain), 1, 0);
+
+// TI scoring from TLP + Confidence + Threat Hunter Directive
+Correlated
+| extend TI_Score = case(
+    TlpLevel == "TLP:RED"   and IntelConfidence >= 90, 100,
+    TlpLevel == "TLP:RED"   and IntelConfidence >= 70,  80,
+    TlpLevel == "TLP:RED",                          60,
+    TlpLevel == "TLP:AMBER" and IntelConfidence >= 90,  80,
+    TlpLevel == "TLP:AMBER" and IntelConfidence >= 70,  60,
+    TlpLevel == "TLP:AMBER",                        40,
+    TlpLevel == "TLP:GREEN" and IntelConfidence >= 90,  60,
+    TlpLevel == "TLP:GREEN" and IntelConfidence >= 50,  40,
+    TlpLevel == "TLP:WHITE",                        20,
+    0
+)
+| extend KillChainRelevance = 80, TemporalScore = 100
+| extend FinalScore = toint(round(BehaviorScore*0.4 + TI_Score*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1))
+| extend FinalRisk = case(
+      FinalScore >= 90, "CRITICAL",
+      FinalScore >= 70, "HIGH",
+      FinalScore >= 50, "MEDIUM",
+      "LOW"
+    )
+| extend MITRE_Tactic    = "TA0003 Persistence; TA0005 Defense Evasion; TA0011 Command and Control",
+         MITRE_Technique = "T1574.002 DLL Search Order Hijacking; possible T1105 Ingress Tool Transfer"
+| extend ThreatHunterDirective = case(
+    FinalRisk == "CRITICAL", "Immediate contain: isolate host, block IOC, memory dump, collect SRUM/EVTX; sighting to MISP.",
+    FinalRisk == "HIGH",     "Urgent review: validate IOC on endpoints, check telemetry, pivot to NetEvents & ProcTree.",
+    FinalRisk == "MEDIUM",   "Investigate & trend: validate DLL source, review parents, monitor device set.",
+    "Monitor: record for trend analysis."
+)
+| project
+    ImageLoadTime, DeviceName, DeviceId,
+    LoaderProc, ImageFileName, ImageSHA256,
+    SignatureStatus, Signer, SeenDeviceCount,
+    CreatedSecondsBeforeLoad, DetectionSignal, BehaviorScore,
+    ExecProc = FileName, Driver = SysFile,
+    RemoteIP, RemoteDomain, RemoteUrl, VT_Link,
+    IntelConfidence, TlpLevel, ThreatType, TI_Score,
+    FinalScore, FinalRisk, MITRE_Tactic, MITRE_Technique, ThreatHunterDirective
+| order by FinalRisk desc, ImageLoadTime desc

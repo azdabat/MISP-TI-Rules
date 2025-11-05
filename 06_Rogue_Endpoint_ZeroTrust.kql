@@ -1,0 +1,60 @@
+// Rogue Endpoint Detection (Naming/Onboarding + LDAP + LSASS)
+// Author: Ala Dabat
+let lookback = 30d;
+let approvedRegex = @"^ACME-(DC|SVC|SQL|WIN|LAP|ADMIN)-\d{2}$";
+
+let RogueDevices =
+DeviceInfo
+| where TimeGenerated >= ago(lookback)
+| extend NameOk = DeviceName matches regex approvedRegex,
+         IsOnboarded = iff(OnboardingState == "Onboarded", 1, 0)
+| where NameOk == false or IsOnboarded == 0
+| project DeviceName, DeviceId, NameOk, IsOnboarded;
+
+let LDAPSuspicious =
+DeviceNetworkEvents
+| where Timestamp >= ago(7d)
+| where RemotePort in (389,636)
+| summarize LDAPHits = count(), FirstLDAP=min(Timestamp), LastLDAP=max(Timestamp) by DeviceName;
+
+let LSASS_Signals =
+SecurityEvent
+| where EventID in (4656,4663)
+| where ObjectName has "lsass"
+| summarize LsassEvents = count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by Computer
+| project DeviceName = Computer, LsassEvents, FirstSeen, LastSeen;
+
+let DumpTools =
+DeviceProcessEvents
+| where Timestamp >= ago(7d)
+| where FileName in ("mimikatz.exe","procdump.exe","procdump64.exe")
+   or ProcessCommandLine has_any ("sekurlsa","-ma","Invoke-Mimikatz")
+| summarize ToolExecs = count(), ExampleCmd = any(ProcessCommandLine), ExampleFile = any(FileName) by DeviceName;
+
+let Combined =
+RogueDevices
+| join kind=leftouter LDAPSuspicious on DeviceName
+| join kind=leftouter LSASS_Signals on DeviceName
+| join kind=leftouter DumpTools on DeviceName
+| extend DetectionSignal = coalesce(LDAPHits,0)*10 + coalesce(LsassEvents,0)*20 + coalesce(ToolExecs,0)*30;
+
+Combined
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("HostName","FileName","IP")
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel, ThreatType, Tags
+) on $left.DeviceName == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence,50)),
+         KillChainRelevance = 80, TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1)),
+         FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM"),
+         MITRE_Tactics = "TA0007 Discovery; TA0008 Lateral Movement; TA0003 Persistence",
+         MITRE_Techniques = "T1078 Valid Accounts; T1555 Credential Dumping; T1482 Domain Discovery",
+         ThreatHunterDirective = case(
+            FinalRisk=="CRITICAL","IMMEDIATE: isolate host, revoke creds, scan for LSASS dumps, review LDAP traffic; add sighting.",
+            FinalRisk=="HIGH","URGENT: verify device join status, check dump tools, escalate if AD queries seen.",
+            "INVESTIGATE: onboard device, validate naming, monitor privilege activity."
+         )
+| project DeviceName, IsOnboarded, NameOk, LDAPHits, LsassEvents, ToolExecs,
+          IntelConfidence, FinalScore, FinalRisk, MITRE_Tactics, MITRE_Techniques, ThreatHunterDirective
+| order by FinalScore desc

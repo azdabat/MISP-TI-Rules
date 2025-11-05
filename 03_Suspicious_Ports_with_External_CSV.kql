@@ -1,0 +1,46 @@
+// Suspicious Ports Hunt (External CSV intelligence + TI)
+// Author: Ala Dabat
+let SuspiciousPortsData = externaldata(
+    dest_port:int,
+    metadata_comment:string,
+    metadata_confidence:string,
+    metatada_category:string,
+    metadata_detection_type:string,
+    metadata_link:string,
+    metadata_reference:string
+)
+[@"https://raw.githubusercontent.com/mthcht/awesome-lists/main/Lists/suspicious_ports_list.csv"]
+with (format='csv', ignoreFirstRecord=true);
+
+let PortDetails = SuspiciousPortsData
+| where metadata_confidence !in~ ("low","info")
+| project dest_port, metadata_comment, metadata_confidence, metatada_category, metadata_detection_type;
+
+let SuspiciousPortList = toscalar(PortDetails | summarize make_set(dest_port));
+
+DeviceNetworkEvents
+| where RemotePort in (SuspiciousPortList)
+| where RemoteIP !in~ ("127.0.0.1","::1")
+| where not(startswith(RemoteIP,"10.") or startswith(RemoteIP,"192.168.") or startswith(RemoteIP,"172."))
+| join kind=leftouter PortDetails on $left.RemotePort == $right.dest_port
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("IP","IPv4")
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel=TlpLevel, ThreatType, Tags
+) on $left.RemoteIP == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence, 40)),
+         DetectionSignal = 70, KillChainRelevance = 70, TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1)),
+         FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM"),
+         VT_Link = strcat("https://www.virustotal.com/gui/ip-address/", RemoteIP),
+         MITRE_Tactics="TA0011 Command and Control",
+         MITRE_Techniques=case(RemotePort==1080,"T1090 Proxy", RemotePort==1194,"T1573 Encrypted Channel","T1071 Application Layer Protocol"),
+         ThreatHunterDirective = case(
+            FinalRisk=="CRITICAL", "IMMEDIATE: block IP, capture PCAP, isolate if endpoint-initiated; add sighting to MISP/OpenCTI.",
+            FinalRisk=="HIGH",     "URGENT: verify process & command line; correlate with DLL/Registry hunts; triage user and app.",
+            "INVESTIGATE: review reputational intel and recent changes; monitor flows."
+         )
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine,
+          RemoteIP, RemotePort, metadata_comment, metadata_confidence, ThreatType, IntelConfidence,
+          FinalScore, FinalRisk, MITRE_Tactics, MITRE_Techniques, VT_Link, ThreatHunterDirective
+| order by FinalScore desc, Timestamp desc

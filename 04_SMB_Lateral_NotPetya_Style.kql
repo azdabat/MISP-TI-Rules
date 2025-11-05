@@ -1,0 +1,68 @@
+// SMB Lateral Movement — NotPetya-style (ADMIN$ + Service Exec)
+// Author: Ala Dabat
+let lookback = 7d;
+let procSet = dynamic(["psexec.exe","wmic.exe","powershell.exe","cmd.exe"]);
+
+let SmbNet =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemotePort == 445
+| where InitiatingProcessFileName in (procSet)
+| project SmbTime = Timestamp, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP;
+
+let AdminShareWrites =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FolderPath matches regex @"(?i)^\\\w[\w\.-]*\\ADMIN\$\\"
+| extend TargetHost = tostring(extract(@"\\([^\\]+)\\ADMIN\$", 1, FolderPath))
+| project FileTime = Timestamp, DeviceName, DeviceId, TargetHost, FolderPath, FileName, SHA256;
+
+let ServiceExec =
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| where FileName in ("psexesvc.exe","svchost.exe","services.exe")
+    or (InitiatingProcessCommandLine has_any ("psexec","\\ADMIN$","sc.exe create","sc.exe start"))
+| project SvcTime = Timestamp, DeviceName, DeviceId, FileName, ProcessCommandLine;
+
+let DnsMap =
+DnsEvents
+| where Timestamp >= ago(lookback)
+| project DnsTime=Timestamp, DeviceName, RemoteIP=IPAddress, ResolvedHost=Name;
+
+let Corr =
+SmbNet
+| join kind=leftouter (DnsMap) on RemoteIP
+| extend TargetHost = coalesce(ResolvedHost, RemoteIP)
+| join kind=leftouter (
+    AdminShareWrites
+    | project FileTime, TargetHost, SrcDeviceName=DeviceName, FolderPath, FileName, SHA256
+) on TargetHost
+| where isnull(FileTime) == false and FileTime between (SmbTime .. SmbTime + 15m)
+| join kind=leftouter (
+    ServiceExec
+    | project SvcTime, SvcDeviceName=DeviceName, SvcFileName=FileName, SvcCmd=ProcessCommandLine
+) on $left.TargetHost == $right.SvcDeviceName
+| where isnull(SvcTime) == false and SvcTime between (FileTime .. FileTime + 15m)
+| extend Evidence = pack("SMBProc", InitiatingProcessFileName, "SMBCmd", InitiatingProcessCommandLine, "AdminSharePath", FolderPath, "AdminShareFile", FileName, "SvcFile", SvcFileName, "SvcCmd", SvcCmd);
+
+Corr
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("IPv4","IP","DomainName","HostName")
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel, ThreatType, Tags
+) on $left.RemoteIP == $right.TI_Indicator or $left.TargetHost == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence, 50)),
+         DetectionSignal = 90, KillChainRelevance = 85, TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1)),
+         FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM"),
+         MITRE_Tactics = "TA0008 Lateral Movement; TA0002 Execution",
+         MITRE_Techniques = "T1021.002 SMB/Admin Shares; T1569.002 Service Execution",
+         ThreatHunterDirective = case(
+            FinalRisk=="CRITICAL", "IMMEDIATE: Isolate source, block lateral creds, triage remote host, add MISP sighting.",
+            FinalRisk=="HIGH",     "URGENT: Validate PsExec/WMI usage; check tickets; pivot to Kerberos/NTLM logs.",
+            "INVESTIGATE: Add watchlist; monitor ADMIN$ writes; review recent service changes."
+         )
+| project SmbTime, DeviceName, RemoteIP, TargetHost, FolderPath, FileName,
+          SvcFileName, SvcCmd, IntelConfidence, FinalScore, FinalRisk,
+          MITRE_Tactics, MITRE_Techniques, ThreatHunterDirective, Evidence
+| order by FinalScore desc, SmbTime desc

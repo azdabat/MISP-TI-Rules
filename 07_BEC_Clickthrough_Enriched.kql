@@ -1,0 +1,38 @@
+// BEC / Malicious Email Click-through (Dynamic TI Scoring)
+// Author: Ala Dabat
+let lookback = 7d;
+
+let DeliveredEmails = EmailEvents
+| where TimeGenerated >= ago(lookback)
+| where DeliveryAction == "Delivered"
+| project TimeGenerated, NetworkMessageId, RecipientEmailAddress, SenderFromAddress, Subject, AttachmentCount, DeliveryAction;
+
+let UrlClicks = UrlClickEvents
+| where TimeGenerated >= ago(lookback)
+| where ActionType in ("ClickAllowed","ClickBlocked")
+| project ClickTime=TimeGenerated, NetworkMessageId, RecipientEmailAddress, Url, ActionType;
+
+let EmailClickThrough = DeliveredEmails
+| join kind=inner (UrlClicks) on NetworkMessageId, RecipientEmailAddress
+| project ClickTime, RecipientEmailAddress, SenderFromAddress, Subject, Url, ActionType, AttachmentCount, DeliveryAction;
+
+let EmailClickEnriched = EmailClickThrough
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("URL","EmailAddress","FileHash")
+    | extend TI_Score = case(ConfidenceScore >= 80, 100, ConfidenceScore >= 50, 50, 20)
+    | project TI_Indicator = Indicator, TI_Type = IndicatorType, TI_Score, ThreatType, TlpLevel, ConfidenceScore
+) on $left.Url == $right.TI_Indicator or $left.SenderFromAddress == $right.TI_Indicator
+| extend TotalScore = coalesce(TI_Score,0),
+         ThreatType = coalesce(ThreatType,"Unknown"),
+         Directive = case(
+           TotalScore >= 80 and ActionType == "ClickAllowed", strcat("IMMEDIATE: Isolate device, reset account, block URL & sender [", ThreatType, "]"),
+           TotalScore >= 80 and ActionType == "ClickBlocked", strcat("IMMEDIATE REVIEW: Confirm block efficacy & search for second-stage payloads [", ThreatType, "]"),
+           TotalScore >= 50 and ActionType == "ClickAllowed", strcat("INVESTIGATE: Endpoint & lateral movement checks; review attachments [", ThreatType, "]"),
+           TotalScore >= 50 and ActionType == "ClickBlocked", strcat("INVESTIGATE: Validate sender & confirm filtering worked [", ThreatType, "]"),
+           "MONITOR: Trend & log for awareness"
+         );
+
+EmailClickEnriched
+| project ClickTime, RecipientEmailAddress, SenderFromAddress, Subject, Url, ActionType, AttachmentCount, DeliveryAction, ConfidenceScore, TotalScore, ThreatType, Directive
+| order by TotalScore desc, ClickTime desc
