@@ -97,6 +97,8 @@ MITRE: TA0003 Persistence | T1547.001 Run Keys | T1218.011 Rundll32
 | **Lateral Movement**     | T1021 SMB, T1077 RDP                              |
 | **C2 / Exfiltration**    | T1071 App Layer Protocol, T1041 Data Exfiltration |
 
+
+
 | Area          | Impact   | Mitigation                                         |                   |
 | ------------- | -------- | -------------------------------------------------- | ----------------- |
 | CPU / Memory  | 🟩🟩⬜⬜   | Apply filters early (`DeviceName startswith "DC"`) |                   |
@@ -115,12 +117,3 @@ MITRE: TA0003 Persistence | T1547.001 Run Keys | T1218.011 Rundll32
 5. ✅ Done — the README will instantly appear formatted with tables, colors, and code boxes.
 
 ---
-
-Would you like me to also generate a **banner header (1200×300)** and small **badges** section (MISP / Sentinel / OpenCTI logos) you can drop in the top lines for extra visual polish? It’ll make your sub-repo stand out like a mini portfolio page.
-
-
-
-
-           + (IntelConfidence * 0.3)
-           + (KillChainRelevance * 0.2)
-           + (TemporalScore * 0.1)
