@@ -1,0 +1,206 @@
+// ======================================================================
+// Kerberos Abuse: Kerberoasting + AS-REP Roasting + Golden-Ticket Indicators
+// Author: Ala Dabat (L2.5 → L3 Threat Detection & Response)
+// MITRE: TA0006 Credential Access; TA0007 Discovery; TA0008 Lateral Movement
+// Techniques: T1558.003 Kerberoasting; T1558.004 AS-REP Roasting; T1550.003 TGT Abuse;
+//             T1047 WMI (supporting); T1021.002 SMB/NamedPipe (supporting)
+// Why: Detects high-volume TGS requests, weak/RC4 encryption, accounts w/o preauth,
+//      suspicious Kerberos network use, and tool fingerprints (Rubeus, Invoke-Kerberoast).
+// ======================================================================
+
+// ------------------------------
+// 0) Tunables & Lookback
+// ------------------------------
+let lookback = 7d;                          // investigation window
+let ticketThreshold = 10;                   // min TGS count (per hour bucket) to flag
+let distinctSPNThreshold = 5;               // breadth of services targeted
+let weakCiphers = dynamic(["0x17","0x18"]); // RC4/legacy enc. seen in roasting
+let toolStrings = dynamic([
+  "Invoke-Kerberoast", "Rubeus", "GetUserSPNs",
+  "SetSPN", "klist", "ksetup", "KerberosRequestorSecurityToken",
+  "ASREPRoast", "Get-DomainUser", "Get-ADUser"
+]);
+
+// -----------------------------------------------
+// 1) TGS (4769) — baseline & field normalization
+// -----------------------------------------------
+// Use native columns if available; fall back to regex extraction from 'Activity' field
+let TGSRequests = 
+SecurityEvent
+| where TimeGenerated >= ago(lookback)
+| where EventID == 4769 // A Kerberos service ticket (TGS) was requested
+| extend RawActivity = tostring(Activity)
+| extend AccountName = coalesce(tostring(TargetUserName), tostring(Account)),
+       ClientAddress = coalesce(tostring(IpAddress), tostring(IpAddress), tostring(extract(@"Client Address:\s*([^\r\n]+)", 1, RawActivity))),
+       ServiceName  = coalesce(tostring(ServiceName), tostring(TargetServiceName), tostring(extract(@"Service Name:\s*([^\r\n]+)", 1, RawActivity))),
+       TicketOptions = coalesce(tostring(TicketOptions), tostring(extract(@"Ticket Options:\s*([^\r\n]+)", 1, RawActivity))),
+       TicketEncryption = coalesce(tostring(TicketEncryptionType), tostring(extract(@"Ticket Encryption Type:\s*([^\r\n]+)", 1, RawActivity)))
+| where isnotempty(AccountName) and isnotempty(ServiceName)
+| where not(ServiceName endswith "$"); // ignore machine accounts
+
+// -----------------------------------------------------
+// 2) Hourly rollup — surge, breadth, weak cipher usage
+// -----------------------------------------------------
+let SuspiciousTGSPatterns =
+TGSRequests
+| summarize
+    TotalTGSRequests = count(),
+    UniqueServices   = dcount(ServiceName),
+    FirstRequest     = min(TimeGenerated),
+    LastRequest      = max(TimeGenerated),
+    RequestDuration  = max(TimeGenerated) - min(TimeGenerated),
+    WeakEncryptionCount = countif(TicketEncryption in (weakCiphers)),
+    TicketOptionsUsed    = make_set(TicketOptions, 10)
+  by AccountName, ClientAddress, bin(TimeGenerated, 1h)
+| where TotalTGSRequests >= ticketThreshold
+| where UniqueServices   >= distinctSPNThreshold
+| extend Evidence = pack(
+  "TotalTGSRequests", TotalTGSRequests,
+  "UniqueServices",   UniqueServices,
+  "RequestDuration",  RequestDuration,
+  "WeakEncryption",   WeakEncryptionCount,
+  "TicketOptions",    TicketOptionsUsed
+);
+
+// ------------------------------------------------------------------
+// 3) Associated Processes — tool fingerprints near the same window
+// ------------------------------------------------------------------
+let AssociatedProcesses =
+DeviceProcessEvents
+| where TimeGenerated >= ago(lookback)
+| where tolower(ProcessCommandLine) has_any (tolower(toolStrings))
+// Include generic AD/KRB hunting helpers to widen the net
+       or FileName in~ ("rubeus.exe","kekeo.exe","adfind.exe","bloodhound.exe","powerview.ps1")
+| project
+    ProcessTime = TimeGenerated,
+    ProcDeviceId = DeviceId,
+    ProcDeviceName = DeviceName,
+    Account = coalesce(InitiatingProcessAccountName, AccountName),
+    FileName,
+    ProcessCommandLine,
+    ProcessSHA256 = coalesce(SHA256, InitiatingProcessSHA256);
+
+// -------------------------------------------------------------------------
+// 4) Kerberos Network Anomalies — ports 88/464, breadth of destinations
+// -------------------------------------------------------------------------
+let NetworkAnomalies =
+DeviceNetworkEvents
+| where TimeGenerated >= ago(lookback)
+| where RemotePort in (88, 464) // Kerberos/kerberos-sec
+| summarize
+    KerberosConnections = count(),
+    UniqueDestinations  = dcount(RemoteIP),
+    FirstSeenKRB = min(TimeGenerated),
+    LastSeenKRB  = max(TimeGenerated)
+  by DeviceId, bin(TimeGenerated, 1h);
+
+// -------------------------------------------------------------------------
+// 5) AS-REP Roasting Indicators — accounts w/o preauth (4768 / result code)
+// -------------------------------------------------------------------------
+// 4768 = A Kerberos authentication ticket (TGT) was requested.
+// Focus on ResultCode indicating no preauth & failures typical in AS-REP roast fishing.
+let ASREPIndicators =
+SecurityEvent
+| where TimeGenerated >= ago(lookback)
+| where EventID == 4768
+| extend RawActivity = tostring(Activity)
+| extend SourceIP = coalesce(IpAddress, tostring(extract(@"Client Address:\s*([^\r\n]+)", 1, RawActivity)))
+| extend ResultCode = coalesce(tostring(Status), tostring(FailureReason), tostring(extract(@"Failure Code:\s*([^\r\n]+)", 1, RawActivity)))
+| summarize ASREP_Failures=count() by SourceIP, bin(TimeGenerated, 1h);
+
+// -------------------------------------------------------------------------
+// 6) Correlate TGS surge with processes + KRB net + AS-REP indicators
+// -------------------------------------------------------------------------
+let Corr =
+SuspiciousTGSPatterns
+| join kind=leftouter (
+    AssociatedProcesses
+    | project ProcessTime, ProcDeviceId, ProcDeviceName, Account, FileName, ProcessCommandLine, ProcessSHA256
+) on $left.AccountName == $right.Account
+| where isnull(ProcessTime) or (ProcessTime between (FirstRequest .. LastRequest + 30m)) // process near the window
+| join kind=leftouter (
+    NetworkAnomalies
+    | project NetBucket = TimeGenerated, DeviceId, KerberosConnections, UniqueDestinations, FirstSeenKRB, LastSeenKRB
+) on $left.ClientAddress == tostring($right.DeviceId)
+| join kind=leftouter (
+    ASREPIndicators
+    | project ASREPTs = ASREP_Failures, ASRepBucket = TimeGenerated, SourceIP
+) on $left.ClientAddress == $right.SourceIP
+| extend AnyASREP = toint(coalesce(ASREPTs, 0) > 0);
+
+// -------------------------------------------------------------------------
+// 7) Signal Scoring (behavioral) — strength of evidence
+// -------------------------------------------------------------------------
+let Scored =
+Corr
+| extend DetectionSignal = case(
+    WeakEncryptionCount > 0 and ( tolower(ProcessCommandLine) has "invoke-kerberoast" or tolower(ProcessCommandLine) has "rubeus" ), 95,
+    TotalTGSRequests > 20 and isnotempty(FileName),      85,
+    TotalTGSRequests >= ticketThreshold and UniqueServices > 10, 75,
+    60
+);
+
+// -------------------------------------------------------------------------
+// 8) Threat Intel (MISP/Graph TI) correlation for host/IP/hash
+// -------------------------------------------------------------------------
+Scored
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where Active == true
+    | where IndicatorType in ("IPv4","IP","DomainName","HostName","FileHash")
+    | project TI_Indicator = Indicator, IntelConfidence = toint(ConfidenceScore), TlpLevel, ThreatType, Tags, ExpirationDateTime
+) on $left.ClientAddress == $right.TI_Indicator
+   or $left.ProcessSHA256 == $right.TI_Indicator
+   or $left.ServiceName has $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence, 50));
+
+// -------------------------------------------------------------------------
+// 9) Final Risk Scoring: behavior + intel + kill-chain + recency
+// -------------------------------------------------------------------------
+| extend KillChainRelevance = 90, // Credential Access phase
+         TemporalScore = case(
+            datetime_diff('hour', now(), LastRequest) < 24, 100,
+            datetime_diff('hour', now(), LastRequest) < 72,  80,
+            60
+         ),
+         FinalScore = toint(round(
+             DetectionSignal * 0.40 +
+             IntelConfidence * 0.30 +
+             KillChainRelevance * 0.20 +
+             TemporalScore * 0.10
+         )),
+         FinalRisk = case(
+            FinalScore >= 90, "CRITICAL",
+            FinalScore >= 75, "HIGH",
+            FinalScore >= 60, "MEDIUM",
+            "LOW"
+         ),
+         MITRE_Tactics = "TA0006 Credential Access; TA0007 Discovery",
+         MITRE_Techniques = strcat_array(
+           pack_array(
+             "T1558.003 Kerberoasting",
+             iif(AnyASREP==1,"T1558.004 AS-REP Roasting",""),
+             "T1087 Account Discovery",
+             iif(WeakEncryptionCount>0,"T1069 Permission Groups Discovery","")
+           ), "; "
+         ),
+         ThreatHunterDirective = case(
+            FinalRisk == "CRITICAL", 
+              "IMMEDIATE: Reset targeted service account passwords; enforce AES; disable RC4; audit DCs; look for ticket reuse; scope lateral movement.",
+            FinalRisk == "HIGH",     
+              "URGENT: Validate SPN access; review AD logs; check for password spraying; monitor for subsequent SMB/WMI/PsExec.",
+            FinalRisk == "MEDIUM",   
+              "INVESTIGATE: Review account behavior; confirm admin actions; consider conditional access controls.",
+            "MONITOR: Add actor to watchlist; baseline future spikes; review known admin tasks."
+         )
+| project-rename
+    DetectionTime   = LastRequest,
+    SourceAccount   = AccountName,
+    SourceIP        = ClientAddress,
+    ToolEvidence    = FileName,
+    ToolCommandLine = ProcessCommandLine
+| project DetectionTime, SourceAccount, SourceIP, ToolEvidence, ToolCommandLine,
+          TotalTGSRequests, UniqueServices, WeakEncryptionCount,
+          IntelConfidence, FinalScore, FinalRisk,
+          MITRE_Tactics, MITRE_Techniques, ThreatHunterDirective, Evidence
+| order by FinalScore desc, DetectionTime desc
