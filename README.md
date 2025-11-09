@@ -76,15 +76,6 @@ Sightings posted back to MISP → OpenCTI → visual link analysis
 | OAuth Abuse    | ~10 s       | 🟢 Low    | Filter AuditLogs on Consent           |
 | Kerberoast     | 30–90 s     | 🟠 High   | Materialize TI subset > 70 confidence |
 
-DeviceRegistryEvents
-| where RegistryKey has_any (PersistenceKeys)
-| join kind=leftouter (ThreatIntelligenceIndicator)
-    on $left.RegistryValueData == $right.Indicator
-| extend FinalScore = (SignalCount*0.4)+(ConfidenceScore*0.3)
-| where FinalScore >= 75
-| project DeviceName, RegistryKey, ValueData, FinalScore, Tags
-Flags malicious persistence keys linked to known IOCs with adaptive risk scoring.
-MITRE: TA0003 Persistence | T1547.001 Run Keys | T1218.011 Rundll32
 
 | Tactic                   | Techniques                                        |
 | ------------------------ | ------------------------------------------------- |
@@ -105,15 +96,3 @@ MITRE: TA0003 Persistence | T1547.001 Run Keys | T1218.011 Rundll32
 | Query Time    | 🟩🟩🟨⬜  | 10–60 s typical                                    | Materialize joins |
 | Sentinel Cost | 🟩🟩🟩⬜  | Low; native tables only                            |                   |
 | Accuracy      | 🟩🟩🟩🟩 | High after MISP confidence integration             |                   |
-
-
----
-
-### 📋 How to add this to your repo
-1. Open your repo → `https://github.com/azdabat/MISP-TI-Rules`
-2. Click **Add file ▸ Edit file** on `README.md`
-3. Delete the existing text, **paste** the above markdown exactly.
-4. Scroll down → **Commit changes** → select “Commit directly to the main branch.”
-5. ✅ Done — the README will instantly appear formatted with tables, colors, and code boxes.
-
----
