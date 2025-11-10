@@ -34,7 +34,7 @@ Each rule:
 ## ⚙️ Adaptive Scoring Model
 
 ```kql
-FinalScore = (DetectionSignal * 0.4)| Risk        | Threshold | Analyst Action             |
+ Risk | Threshold | Analyst Action|
 | ----------- | --------- | -------------------------- |
 | 🔴 Critical | ≥ 90      | Immediate IR containment   |
 | 🟠 High     | 75 – 89   | Escalate & triage          |
