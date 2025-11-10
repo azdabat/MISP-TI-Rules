@@ -1,4 +1,5 @@
 // OAuth Consent Abuse Detection (Cloud token & app consent)
+// Incomplete Attack Chain
 // Author: Ala Dabat
 let KnownSafeApps = dynamic(["Microsoft Office 365 Portal","Microsoft Teams","SharePoint Online","OneDrive","Outlook Web App","Microsoft Intune"]);
 
