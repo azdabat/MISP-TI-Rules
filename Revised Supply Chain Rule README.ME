@@ -1,0 +1,81 @@
+# 🧩 Supply-Chain Compromise / Signed Binary Drift & DLL-Driver Abuse Detection
+**Author:** Ala Dabat  
+**Platform:** Microsoft Defender / Sentinel (Advanced Hunting – Native KQL)  
+**Classification:** L3 Threat Hunt / Analytic Rule  
+**Version:** 2.1 (Enhanced for Integrity Drift)  
+**Last Updated:** 2025-11-11  
+
+---
+
+## 🔍 Overview
+This rule detects **supply-chain compromises** and **signed binary abuse** on endpoints by correlating:
+- Signed but **tampered vendor binaries** (version/signature drift)
+- **DLL sideloading** and **driver injection** abuse
+- **Registry persistence** (ServiceDll, InprocServer32, Run keys)
+- **Dormant or delayed activation** typical of SolarWinds/3CX-style implants  
+- **Network, process, and driver context** for kill-chain correlation  
+
+It introduces **integrity-drift analytics** to identify binaries whose signature, hash, or version differs from the organization’s baseline, signaling a potential **compromised update or malicious rebuild**.
+
+---
+
+## ⚙️ Detection Logic Summary
+
+| Component | Purpose |
+|------------|----------|
+| `DeviceFileEvents` | Tracks DLL/EXE/driver creation and version/signature drift |
+| `DeviceImageLoadEvents` | Identifies execution or load of suspicious DLLs |
+| `DeviceRegistryEvents` | Flags registry-based persistence mechanisms |
+| `DeviceEvents` | Detects driver loads (including file-less BYOVD) |
+| `DeviceNetworkEvents` | Adds C2 or callback context |
+| `OrgPrevalence` | Baselines file rarity across the tenant |
+| `IntegrityDrift` | Detects signer/version/hash drift of signed apps |
+
+---
+
+## 🧠 Detection Methodology
+
+The rule computes:
+- **BehaviorScore** → Execution timing, rarity, unsigned state, vendor loader
+- **KillChainScore** → Driver / registry persistence correlation
+- **RecencyScore** → Prioritizes new activity  
+- **FinalScore = 0.6×Behavior + 0.3×KillChain + 0.1×Recency**
+
+Then classifies as:
+| Severity | Threshold | Action |
+|-----------|------------|--------|
+| **ALERT** | ≥ 75 | Trigger incident, isolate host |
+| **HUNT** | 40–74 | Investigate, pivot across estate |
+| **LOG** | < 40 | Baseline / telemetry only |
+
+---
+
+## 🧩 MITRE ATT&CK Mapping
+| Tactic | Technique ID | Description |
+|--------|---------------|-------------|
+| **Persistence** | `T1547.*` | Registry & service DLL persistence |
+| **Defense Evasion** | `T1574.002` | DLL Search Order Hijacking |
+| **Privilege Escalation** | `T1547.006` | Driver-based persistence |
+| **Execution** | `T1055` | Indirect code load (via DLL/driver) |
+| **Command & Control** | `T1071`, `T1105` | Network beaconing / data transfer |
+| **Defense Evasion** | `T1553.002` | Code-signing certificate abuse |
+
+---
+
+## 🧩 Detection Capabilities by Attack Type
+
+| Attack Type | Example | Coverage |
+|--------------|----------|-----------|
+| DLL sideloading | SolarWinds, 3CX | ✅ Full |
+| Signed driver abuse | F5, BlackByte | ✅ Full |
+| Dormant loaders | SUNBURST, CCleaner | ✅ Full |
+| Registry persistors | Run / ServiceDll keys | ✅ Full |
+| Version/signature drift | Vendor app tampering | ✅ Full |
+| File-less in-memory load | Reflective injection | ⚙ Partial |
+| Pure cloud/SaaS compromise | Okta / CircleCI | ❌ Out of scope |
+
+---
+
+## 🧩 Example Attack Chains Detected
+
+### 1️⃣ SolarWinds / SUNBURST Pattern
