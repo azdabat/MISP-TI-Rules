@@ -21,6 +21,103 @@ It introduces **integrity-drift analytics** to identify binaries whose signature
 
 ## ⚙️ Detection Logic Summary
 
+Signed Orion process
+↓ loads
+Trojanized BusinessLayerHost.dll
+↓ dormant 14 days
+↓ registry persist (ServiceDll)
+↓ driver drop / C2 beacon
+
+✅ Detected through **DormantVeryLong + SignerDrift + Registry persistence**
+
+---
+
+### 2️⃣ 3CX Compromise
+
+
+3cxdesktopapp.exe (signed)
+↓ loads
+d3dcompiler_47.dll (malicious)
+↓ fast-load & network C2
+
+✅ Detected via **VendorProcess + FastLoad + Unsigned DLL**
+
+---
+
+### 3️⃣ F5 BIG-IP Breach
+
+
+Vendor service binary (signed)
+↓ loads
+Injected DLL → drops signed driver
+↓ reactivated after reboot
+
+✅ Detected via **DriverLoad + DormantLong + Registry persistence**
+
+---
+
+## 🧭 SOC Hunter Directives
+Each alert includes structured guidance in the `HunterDirectives` column:
+
+1. Review loader process & signer integrity  
+2. Verify **version / signer / hash drift** vs baseline  
+3. Analyze **Create→Load delay** (fast vs dormant)  
+4. Check registry persistence near event time  
+5. Confirm driver activity or kernel module loads  
+6. Investigate related **network connections**  
+7. If **ALERT:** isolate host, dump memory, preserve binaries  
+8. If **HUNT:** pivot across devices and verify vendor authenticity  
+
+---
+
+## 🧩 False-Positive Guidance
+| Source | Mitigation |
+|---------|-------------|
+| Legitimate vendor update | Validate signer + version in vendor release notes |
+| Internal software builds | Add internal publisher to `TrustedPublishers` |
+| EDR/AV agent self-updates | Verify signer + allowlist path temporarily |
+
+---
+
+## 🧩 Deployment Notes
+- Designed for **native use** in Microsoft Defender / Sentinel Advanced Hunting.  
+- No external TI feeds required.  
+- Can be promoted to **Analytic Rule** with alert automation using `Severity=="ALERT"`.  
+- For enrichment, integrate with **MISP/OpenCTI** to cross-check drifted binaries with known IoCs.
+
+---
+
+## 🧩 Expected Results
+| Attack Vector | Detection | Confidence |
+|----------------|------------|-------------|
+| Vendor binary tampering | ✅ | 🔥 High |
+| Dormant or staged loader | ✅ | High |
+| BYOVD driver implant | ✅ | High |
+| Registry-only persistence | ✅ | Medium-High |
+| File-less reflective load | ⚙ Partial | Medium |
+
+---
+
+## 🧩 Recommendations
+- Add **continuous baseline jobs** for version/signer tracking every 7 days.  
+- Integrate **hash drift** with your asset inventory or CMDB for supply-chain integrity monitoring.  
+- Maintain an **allowlist file** for legitimate vendor updates (auto-expire after 30 days).  
+- Periodically refresh **TrustedPublishers** and **VendorProcesses** lists.
+
+---
+
+## 📄 License & Attribution
+© 2025 Ala Dabat – MIT License.  
+Free to use, modify, and redistribute with attribution.  
+If reused, reference this repo as:  
+`https://github.com/azdabat/MISP-TI-Rules`  
+
+---
+
+### 🧱 Tags
+`#KQL` `#DetectionEngineering` `#SupplyChain` `#DLLHijacking`  
+`#DriverAbuse` `#MITREATTACK` `#ThreatHunting` `#IntegrityMonitoring`
+
 | Component | Purpose |
 |------------|----------|
 | `DeviceFileEvents` | Tracks DLL/EXE/driver creation and version/signature drift |
@@ -79,3 +176,28 @@ Then classifies as:
 ## 🧩 Example Attack Chains Detected
 
 ### 1️⃣ SolarWinds / SUNBURST Pattern
+
+
+---
+
+## 🔁 End-to-End Flow Summary
+
+1. **File Drop / Modification:** Suspicious DLL or SYS created on host.  
+2. **Execution:** File loaded by signed vendor process (e.g., 3CX.exe).  
+3. **Persistence:** Registry or service entry modified to ensure reboot survival.  
+4. **Integrity Drift:** Binary’s signer or version deviates from baseline.  
+5. **Kill-Chain Correlation:** Network, process, and driver telemetry unified.  
+6. **Scoring Engine:** Behavior + Kill-Chain + Recency → FinalScore.  
+7. **Analyst Output:** HunterDirectives guide triage, isolation, and validation.
+
+---
+
+### 📊 Visualization Summary
+- **Blue boxes (Process/File telemetry)** → `DeviceFileEvents`, `DeviceImageLoadEvents`
+- **Orange boxes (Persistence / Drift)** → `DeviceRegistryEvents`, `IntegrityDrift`
+- **Green boxes (Execution / Network)** → `DeviceEvents`, `DeviceNetworkEvents`
+- **Red box (FinalScore)** → Unified analytic scoring (Alert/Hunt/Log)
+
+---
+
+
