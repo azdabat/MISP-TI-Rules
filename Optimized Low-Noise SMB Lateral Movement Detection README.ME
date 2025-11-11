@@ -92,3 +92,49 @@ These optimizations make the rule **safe for production analytic rules** even in
 
 ## 🔄 Example Attack Flow (ASCII Timeline)
 
+[1] PsExec / WMIC / PowerShell initiates SMB (445) connection
+│
+[2] File dropped to \TARGET\ADMIN$\Temp\payload.exe
+│
+[3] sc.exe create / start or psexesvc.exe executed remotely
+│
+[4] Windows logs Event 7045 (service created)
+│
+[5] Optional credential reuse via Kerberos/NTLM
+│
+[6] Rule correlates events → FinalScore ≥ 90 → ALERT
+
+
+---
+
+## 🧩 Real-World Detections
+
+| Threat | Pattern Matched | Outcome |
+|---------|----------------|----------|
+| **NotPetya (2017)** | SMB → ADMIN$ copy → Service exec | ✅ Detected as Critical |
+| **WannaCry** | SMB propagation fallback | ✅ Detected as High |
+| **Ryuk / Conti** | PsExec deployment to multiple servers | ✅ Detected as High |
+| **Emotet / TrickBot** | Lateral move via SC & SMB | ✅ Detected as Medium–High |
+
+---
+
+## 🧩 Recommended Deployment
+
+| Mode | Lookback | Purpose |
+|------|-----------|----------|
+| **Continuous Analytic Rule** | 24 h | Real-time alerting with low CPU impact |
+| **Nightly Hunt Job** | 7 d | Deep correlation / worm detection |
+| **Manual Hunt Pivot** | Ad-hoc | Analyst drill-down / validation |
+
+---
+
+## 📄 License & Attribution
+© 2025 Ala Dabat — MIT License  
+Free for SOC / Threat Hunting use with attribution.  
+Repository link: `https://github.com/azdabat/MISP-TI-Rules`
+
+---
+
+### 🧱 Tags
+`#KQL` `#ThreatHunting` `#LateralMovement` `#SMB` `#PsExec` `#MITREATTACK` `#Detection
+
