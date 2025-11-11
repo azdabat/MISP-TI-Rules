@@ -1,0 +1,156 @@
+// ===================================================================
+// L3 Native Hunt: Supply-Chain Compromise / Signed Binary Drift + DLL-Driver-Registry Correlation
+// Author: Ala Dabat  (enhanced for integrity & version drift)
+// ===================================================================
+
+// -------------------- Tunables --------------------
+let lookback = 14d;
+let prevalenceWindow = 90d;
+let fastLoadSec = 300;
+let dormantShortSec = 86400;      // 1 day
+let dormantLongSec  = 604800;     // 7 days
+let dormantVeryLongSec = 2592000; // 30 days
+let scoreAlertThreshold = 75;
+let scoreHuntThreshold  = 40;
+
+// -------------------- Baselines --------------------
+let TrustedPublishers = dynamic(["Microsoft Corporation","Google LLC","Mozilla Corporation","F5 Networks","SolarWinds"]);
+let CommonLoaders = dynamic(["explorer.exe","svchost.exe","services.exe","mmc.exe","msiexec.exe"]);
+let VendorProcesses = dynamic(["3cx.exe","SolarWinds.BusinessLayerHost.exe","vendor.exe","bigip_service.exe"]);
+
+// -------------------- Org-wide baselines --------------------
+let OrgPrevalence =
+DeviceFileEvents
+| where Timestamp >= ago(prevalenceWindow)
+| summarize SeenDeviceCount=dcount(DeviceId),
+            BaselineVersion=any(FileVersion),
+            BaselineSigner=any(SignatureIssuer),
+            BaselineSHA256=any(SHA256)
+  by FileName, FolderPath;
+
+// -------------------- Image loads --------------------
+let ImageLoads =
+DeviceImageLoadEvents
+| where Timestamp >= ago(lookback)
+| project ImageLoadTime=Timestamp, DeviceId, DeviceName,
+          LoaderProc=ProcessFileName, LoaderPID=ProcessId,
+          ImageFileName, ImageSHA256=coalesce(SHA256,tostring(ImageHash)),
+          FileVersion, SignatureStatus, Signer;
+
+// -------------------- File creates --------------------
+let FileCreates =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName endswith ".dll" or FileName endswith ".exe"
+| project FileCreateTime=Timestamp, DeviceId, DeviceName,
+          FileName, FolderPath, FileSHA256=SHA256,
+          FileVersion, InitiatingProcessFileName, InitiatingProcessSigner;
+
+// -------------------- Driver loads --------------------
+let DriverLoads =
+union
+(DeviceFileEvents | where FileName endswith ".sys" | project DeviceId, DeviceName, FilePath=FolderPath, SHA256, Timestamp),
+(DeviceEvents | where ActionType=="DriverLoad" | project DeviceId, DeviceName, FilePath=tostring(AdditionalFields.FilePath), SHA256=tostring(AdditionalFields.SHA256), Timestamp)
+| project DriverTime=Timestamp, DeviceId, DeviceName, DriverPath=FilePath, DriverSHA256=SHA256;
+
+// -------------------- Registry persistence --------------------
+let PersistenceKeys = dynamic([
+  @"HKLM\SYSTEM\CurrentControlSet\Services\*\Parameters\ServiceDll",
+  @"HKCU\Software\Classes\CLSID\*\InprocServer32",
+  @"HKLM\Software\Classes\CLSID\*\InprocServer32",
+  @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs",
+  @"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Authentication Packages",
+  @"HKLM\Software\Microsoft\Windows\CurrentVersion\Run",
+  @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+]);
+let RegWrites =
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where ActionType=="RegistryValueSet" and RegistryKey has_any (PersistenceKeys)
+| project RegTime=Timestamp, DeviceId, DeviceName, RegistryKey, RegistryValueName, RegistryValueData;
+
+// -------------------- Network + Process Context --------------------
+let NetCtx =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| project NetTime=Timestamp, DeviceId, DeviceName, RemoteIP, RemoteUrl, InitiatingProcessFileName;
+let ProcCtx =
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| project ProcTime=Timestamp, DeviceId, DeviceName, ProcessFileName, ProcessCommandLine, ParentProcessFileName, InitiatingProcessSigner;
+
+// -------------------- Integrity / Version Drift --------------------
+let IntegrityDrift =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| summarize LatestSHA256=any(SHA256),
+            LatestVersion=any(FileVersion),
+            LatestSigner=any(SignatureIssuer),
+            DeviceCount=dcount(DeviceId)
+  by FileName, FolderPath
+| join kind=leftouter OrgPrevalence on FileName, FolderPath
+| extend VersionDrift = iif(LatestVersion != BaselineVersion and isnotempty(BaselineVersion), 1, 0),
+         SignerDrift  = iif(LatestSigner != BaselineSigner and isnotempty(BaselineSigner), 1, 0),
+         HashDrift    = iif(LatestSHA256 != BaselineSHA256 and isnotempty(BaselineSHA256), 1, 0)
+| where VersionDrift==1 or SignerDrift==1 or HashDrift==1;
+
+// -------------------- Correlate everything --------------------
+let Candidates =
+ImageLoads
+| join kind=leftouter (FileCreates) on $left.DeviceId==$right.DeviceId and $left.ImageSHA256==$right.FileSHA256
+| extend Seconds_CreateToLoad=iff(isnotempty(FileCreateTime),
+      tolong(datetime_diff('second',ImageLoadTime,FileCreateTime)), long(999999))
+| join kind=leftouter (OrgPrevalence) on $left.ImageFileName==$right.FileName and $left.LoaderProc!=""
+| join kind=leftouter (IntegrityDrift) on $left.ImageFileName==$right.FileName
+| join kind=leftouter (DriverLoads) on DeviceId
+| join kind=leftouter (RegWrites) on DeviceId
+| join kind=leftouter (ProcCtx) on DeviceId
+| join kind=leftouter (NetCtx) on DeviceId
+| extend
+    IsUnsigned = iif(SignatureStatus !in ("Signed","Valid"),1,0),
+    TrustedSigner = iif(Signer in~ (TrustedPublishers),1,0),
+    IsRare = iif(coalesce(SeenDeviceCount,0)<=2,1,0),
+    LoaderIsVendor = iif(LoaderProc in~ (VendorProcesses),1,0),
+    FastLoad = iif(abs(Seconds_CreateToLoad)<=fastLoadSec,1,0),
+    DormantShort = iif(Seconds_CreateToLoad>fastLoadSec and Seconds_CreateToLoad<=dormantShortSec,1,0),
+    DormantLong = iif(Seconds_CreateToLoad>dormantShortSec and Seconds_CreateToLoad<=dormantLongSec,1,0),
+    DormantVeryLong = iif(Seconds_CreateToLoad>dormantLongSec and Seconds_CreateToLoad<=dormantVeryLongSec,1,0),
+    MentionsDLL = iif(tostring(RegistryValueData) matches regex @"(?i)\.dll\b",1,0);
+
+// -------------------- Scoring --------------------
+| extend
+  BehaviorScore = (3*FastLoad)+(1*DormantShort)+(2*DormantLong)+(3*DormantVeryLong)
+                 +(3*IsUnsigned)+(2*IsRare)+(2*LoaderIsVendor)
+                 +(3*VersionDrift)+(3*SignerDrift)+(3*HashDrift)
+                 -(1*TrustedSigner),
+  KillChainScore = toint(isnotempty(DriverPath))+toint(MentionsDLL),
+  RecencyScore = iif(ImageLoadTime>=ago(24h),10,0),
+  FinalScore = round((BehaviorScore*0.6)+(KillChainScore*0.3)+(RecencyScore*0.1),1),
+  Severity = case(FinalScore>=scoreAlertThreshold,"ALERT",
+                  FinalScore>=scoreHuntThreshold,"HUNT","LOG");
+
+// -------------------- Output --------------------
+| extend MITRE_Tactics="TA0003 Persistence; TA0005 Defense Evasion; TA0011 C2",
+         MITRE_Techniques=strcat_array(pack_array(
+           "T1574.002 DLL Search Order Hijacking",
+           iif(VersionDrift==1 or SignerDrift==1,"T1553.002 Code Signing Abuse",""),
+           iif(isnotempty(DriverPath),"T1547.006 Kernel/Driver Persistence","")
+         ),"; "),
+         HunterDirectives=pack_array(
+           strcat("1) Loader: ",LoaderProc," (Signer=",Signer,")"),
+           strcat("2) Integrity drift? V:",tostring(VersionDrift)," S:",tostring(SignerDrift)," H:",tostring(HashDrift)),
+           strcat("3) Create→Load delay=",tostring(Seconds_CreateToLoad),"s"),
+           strcat("4) Registry persistence: ",iif(MentionsDLL==1,RegistryKey,"None")),
+           strcat("5) Driver activity: ",iif(isnotempty(DriverPath),DriverPath,"None")),
+           strcat("6) Network context: ",coalesce(RemoteUrl,RemoteIP,"None")),
+           "7) If ALERT: isolate host, collect binaries, compare against vendor baseline",
+           "8) If HUNT: pivot across FileVersion/Signer drift, confirm legitimacy"
+         )
+| project Severity, FinalScore, ImageLoadTime, DeviceName,
+          LoaderProc, ImageFileName, FileVersion, Signer,
+          VersionDrift, SignerDrift, HashDrift, IsRare,
+          FastLoad, DormantShort, DormantLong, DormantVeryLong,
+          DriverPath, RegistryKey, RegistryValueData,
+          RemoteUrl, RemoteIP,
+          MITRE_Tactics, MITRE_Techniques, HunterDirectives
+| order by Severity desc, FinalScore desc, ImageLoadTime desc;
