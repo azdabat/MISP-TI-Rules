@@ -1,0 +1,94 @@
+# 🧩 Optimized Low-Noise SMB Lateral Movement Detection (PsExec / NotPetya / Worm Propagation)
+**Author:** Ala Dabat  
+**Rule Name:** `SMB_Lateral_Movement_LowNoise_v2.2.kql`  
+**Platform:** Microsoft Defender / Sentinel (Advanced Hunting)  
+**Purpose:** Detect stealthy or automated lateral movement over SMB (ADMIN$ shares + Service Exec) with minimized CPU load and false positives.  
+
+---
+
+## 🔍 Overview
+This rule detects **SMB-based lateral movement** activity similar to **NotPetya, Ryuk, Conti, Emotet,** and other ransomware or post-exploitation frameworks.  
+It focuses on the **core indicators of remote service execution** via ADMIN$ shares while remaining lightweight and cost-efficient through two-stage correlation and aggregation logic.
+
+---
+
+## ⚙️ Detection Summary
+
+| Stage | Purpose | Data Source |
+|--------|----------|-------------|
+| **Stage 1 – Candidate Generation** | Identify hosts initiating SMB (port 445) sessions with PsExec, WMIC, PowerShell, CMD, or SC.exe, then writing to ADMIN$ shares. | `DeviceNetworkEvents`, `DeviceFileEvents` |
+| **Stage 2 – Enrichment & Validation** | Enrich only candidate hosts with service creation, authentication, and TI context. | `DeviceProcessEvents`, `SecurityEvent 7045`, `SigninLogs`, `ThreatIntelligenceIndicator` |
+| **Scoring & Classification** | Combine propagation count + intel confidence + recency to compute FinalScore ( 40 – 100 ). | Internal weighting |
+| **Hunter Directives** | SOC triage checklist embedded in results. | Output columns |
+
+---
+
+## 🧠 Design Highlights
+- **Two-Stage Pipeline:** cheap Stage 1 candidate scan → heavy Stage 2 enrichment only on matches.  
+- **Materialized subqueries:** reuse cached sets to avoid recomputation.  
+- **Summarized joins:** uses `arg_max()` and `innerunique` joins to reduce cardinality.  
+- **Short lookback (24 h)** for continuous alerts; full 7 d version scheduled nightly.  
+- **Propagation threshold:** requires multiple targets before firing high severity events.  
+
+These optimizations make the rule **safe for production analytic rules** even in large Defender for Endpoint or Sentinel deployments.
+
+---
+
+## 🧩 MITRE ATT&CK Mapping
+
+| Tactic | Technique ID | Description |
+|---------|---------------|-------------|
+| **TA0008 Lateral Movement** | `T1021.002` | SMB / ADMIN$ remote file copy |
+| **TA0002 Execution** | `T1569.002` | Service execution (remote start) |
+| **TA0006 Credential Access** | `T1078` | Valid account reuse (Kerberos/NTLM) |
+| **TA0005 Defense Evasion** | `T1047` | WMI execution / remote commands |
+
+---
+
+## 🧩 Detection Output Fields
+
+| Field | Description |
+|--------|-------------|
+| `SrcDevice` | Originating host initiating SMB connection |
+| `RemoteIP / TargetHost` | Remote destination |
+| `HostPropagationCount` | Number of unique targets reached |
+| `FileName` | File copied to ADMIN$ |
+| `SvcFileName / SvcCmd` | Service invoked remotely |
+| `FinalScore / FinalRisk` | Weighted risk classification |
+| `ThreatHunterDirective` | Step-by-step triage guidance |
+
+---
+
+## 🚦 Risk Classification
+
+| FinalScore Range | Label | SOC Action |
+|------------------|--------|------------|
+| ≥ 90 | **CRITICAL** | Isolate source host + block SMB; review auth tickets |
+| 70–89 | **HIGH** | Validate PsExec usage; review remote service creation |
+| 40–69 | **MEDIUM** | Baseline legit admin activity; watchlist host |
+| < 40 | **INFO** | Likely benign; log only |
+
+---
+
+## 🧭 Hunter Directives (Embedded)
+
+1. Review loader process and command line (`SmbProc / SmbCmd`).  
+2. Confirm file written to ADMIN$ share (`FileName / FolderPath`).  
+3. Check for matching Service Creation or Event 7045 records.  
+4. Pivot to Kerberos / NTLM logs for credential reuse.  
+5. Inspect any TI-matched IP or domain for external beacons.  
+6. If `HostPropagationCount ≥ 3` → treat as worm propagation scenario.  
+
+---
+
+## 🧩 Performance Optimization Notes
+- Uses `materialize()` to cache subqueries.  
+- Employs `arg_max()` summaries before joins.  
+- Runs in two stages to avoid multi-table explosion.  
+- Safe for continuous analytic rules (24 h lookback).  
+- Nightly 7 d variant recommended for deep hunts.  
+
+---
+
+## 🔄 Example Attack Flow (ASCII Timeline)
+
