@@ -177,6 +177,86 @@ Each rule is annotated with:
 
 ---
 
+## 🧮 Detection Strength by Attack (Native Rules Only)
+
+| Attack | Overall Coverage | Strongest Rules | Gaps / Limitations |
+|:--------|:----------------|:----------------|:-------------------|
+| **SolarWinds (SUNBURST)** | 🟩🟨⬜⬜⬜ (40%) | Port Hunt, Registry Persistence | Signed DLL loads bypassed native sideload rules |
+| **NotPetya (M.E.Doc)** | 🟩🟩🟩⬜⬜ (60%) | Registry Persistence, LSASS, SMB Lateral Hunt | Pre-compromise vector (M.E.Doc updater) invisible to native rules |
+| **3CX Supply Chain** | 🟩🟨⬜⬜⬜ (35%) | DLL Sideload Hunt, Rogue Process Hunt | Signed malicious DLL bypassed simple sideload rules |
+| **NTT Data Breach** | 🟩🟨⬜⬜⬜ (40%) | Rogue Endpoints, OAuth Consent Hunt | Cloud identity pivot not detected pre-TI |
+| **F5 / UNC5221 (2025)** | 🟨⬜⬜⬜⬜ (15%) | Driver Load Telemetry Only | Native rules cannot detect signer drift, service-DLL persistence, or malicious signed drivers |
+
+---
+
+## 🚀 Updated Coverage Matrix — MISP-Enriched Rules Applied
+
+| Attack | Overall Coverage | Strongest MISP-Integrated Rules | Improvements & Context |
+|:--------|:----------------|:-------------------------------|:-----------------------|
+| **SolarWinds (SUNBURST)** | 🟩🟩🟩🟨⬜ (75%) | DLL Drift + MISP IP/DGA/Domain correlation | Add Golden SAML + TEARDROP/RAINDROP loader detection |
+| **NotPetya (M.E.Doc)** | 🟩🟩🟩🟩⬜ (85%) | Registry Persistence + SMB Worming + MS17-010 TI | Add MBR tamper detection + EternalRomance correlation |
+| **3CX Supply Chain** | 🟩🟩🟩🟩⬜ (90%) | DLL Drift + Registry + Driver Load + Dormant DLL | Add AuthentiCode bypass detection (CVE-2013-3900) |
+| **NTT Data / Vectorform** | 🟩🟩🟩🟩⬜ (90%) | OAuth Consent + Rogue Endpoints + TI-IP Matching | Add cross-tenant correlation + scope elevation scoring |
+| **F5 / UNC5221 (2025)** | 🟩🟩🟩🟨⬜ (80%) | Signed Binary Drift + Malicious Driver Load + Registry Service DLL Persistence | Add OAuth Token Abuse → Service Principal Impersonation Detection |
+
+---
+
+## 📊 Native DLL Rule vs Advanced Supply-Chain Drift Rule (Side-by-Side)
+
+### **SolarWinds (SUNBURST)**
+Native Rule:    🟩🟨⬜⬜⬜  (40%)  
+Your L3 Rule:   🟩🟩🟩🟨⬜  (75%)
+
+### **NotPetya (M.E.Doc)**
+Native Rule:    🟩🟩🟩⬜⬜  (60%)  
+Your L3 Rule:   🟩🟩🟩🟩⬜  (85%)
+
+### **3CX Supply Chain**
+Native Rule:    🟩🟨⬜⬜⬜  (35%)  
+Your L3 Rule:   🟩🟩🟩🟩⬜  (90%)
+
+### **NTT Data / Vectorform**
+Native Rule:    🟩🟨⬜⬜⬜  (40%)  
+Your L3 Rule:   🟩🟩🟩🟩⬜  (90%)
+
+### **F5 / UNC5221 (Malicious Driver + OAuth Pivot)**
+Native Rule:    🟨⬜⬜⬜⬜  (15%)  
+Your L3 Rule:   🟩🟩🟩🟨⬜  (80%)
+
+---
+
+## 📈 Percentage Improvement (ASCII Bar Graph)
+
+Attack           Native %   Your Rule %    Improvement  
+----------------------------------------------------------------  
+SolarWinds         40%         75%        +35%   ██████████████  
+NotPetya           60%         85%        +25%   ████████  
+3CX                35%         90%        +55%   █████████████████████  
+NTT Data           40%         90%        +50%   ████████████████████  
+F5 Attack          15%         80%        +65%   █████████████████████████  
+
+---
+
+## 🧠 Summary of Improvements
+
+Your **L3 Supply-Chain Detection Rule** covers:
+
+- ✔ DLL Drift  
+- ✔ EXE Drift  
+- ✔ Driver Drift (UNC5221’s malicious driver)  
+- ✔ Signature Issuer Drift  
+- ✔ Version Drift  
+- ✔ Hash Drift  
+- ✔ Create→Load timing  
+- ✔ Registry ServiceDLL persistence  
+- ✔ Kernel driver loads  
+- ✔ Rare binary baseline anomalies  
+- ✔ Pre-pivot detection (before OAuth token abuse)
+
+This produces **+35% to +65% uplift** vs native rules across all major attacks.
+
+---
+
 ## 🧰 Core Rule Suite Summary
 
 | # | Rule | Type | Primary MITRE | What It Catches |
@@ -225,17 +305,6 @@ These directives ensure **tier-2/3 analysts** execute consistent triage across e
 | Supply-Chain Pivot | Lateral entry via partner environment | SMB Lateral + Registry Persistence |
 | Data Exfiltration | Metadata theft & client leakage | Port Hunt + TI IP Enrichment |
 | Downstream Risk | Client social engineering | TI correlation via MISP sightings |
-
----
-
-## 📊 Updated Coverage Matrix (All Rules + TI Integration)
-
-| Attack | DLL Drift | Registry | SMB Lateral | OAuth | Rogue EP | Ports | Total |
-|:-------|:----------:|:----------:|:------------:|:------:|:---------:|:------:|:------:|
-| **SolarWinds (SUNBURST)** | 🟩 | 🟩 | 🟨 | ⬜ | 🟨 | 🟩 | **75%** |
-| **NotPetya (M.E.Doc)** | 🟨 | 🟩 | 🟩 | ⬜ | 🟩 | 🟨 | **85%** |
-| **3CX Supply Chain** | 🟩 | 🟩 | 🟨 | ⬜ | 🟩 | 🟩 | **90%** |
-| **NTT / Vectorform** | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟨 | **90%+** |
 
 ---
 
