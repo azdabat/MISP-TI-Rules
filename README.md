@@ -32,8 +32,8 @@ Each rule is annotated with:
 ### 🧱 SolarWinds (SUNBURST)  
 
 <br> [1] Build Compromise → Malicious DLL Injection </br>
-     │  IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
-     ▼
+<br>    │  IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized) </br>
+<br>    ▼ </br>
 [2] Signed Trojanized Update Distributed
      │  IOC: Valid SolarWinds certificate abused
      ▼
