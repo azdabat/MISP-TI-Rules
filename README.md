@@ -27,123 +27,109 @@ Each rule is annotated with:
 
 ---
 
-## 🧠 Supply-Chain Attack Chains (ASCII)
+# 🧩 Supply-Chain Attack Chains (ASCII Diagrams)
 
-### 🧱 SolarWinds (SUNBURST)  
-
-<br> [1] Build Compromise → Malicious DLL Injection </br>
-        │  IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized) 
-<br>    ▼ </br>
+### 🧱 SolarWinds (SUNBURST)
+[1] Build Compromise → Malicious DLL Injection
+│ IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
+▼
 [2] Signed Trojanized Update Distributed
-     │  IOC: Valid SolarWinds certificate abused
-     ▼
+│ IOC: Valid SolarWinds code-signing certificate abused
+▼
 [3] Legit Process Loads Backdoor
-     │  SolarWinds.BusinessLayerHost.exe → loads BusinessLayer.dll
-     ▼
+│ Process: SolarWinds.BusinessLayerHost.exe
+│ Loads: BusinessLayer.dll
+▼
 [4] C2 Beacon → DGA Domains
-     │  avsvmcloud[.]com → victim-specific subdomains
-     ▼
-[5] Lateral Movement → PsExec/WMIC
-     │  ADMIN$ writes + service creation
-     ▼
+│ IOC: avsvmcloud[.]com IP: 13.59.205.66
+▼
+[5] Lateral Movement → PsExec / WMIC
+│ Technique T1021.002 SMB / Admin Shares
+│ IOC: ADMIN$ share writes
+▼
 [6] Persistence → Registry + Scheduled Tasks
-     │  svchelper.dll dropped
+│ IOC: svchelper.dll (secondary payload)
+│ Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
 
 
-    
+
+---
+
 ### 💀 NotPetya (M.E.Doc Supply Chain)
-
 [1] Trojanized Accounting Software Update
-    │   IOC: M.E.Doc updater.exe (compromised)
-    │   Hash: 8c29c2c7d10eef853bb54cb4f08e873c7eaf5b6d48476f14d8c6e1adb586bc5c
-    ▼
+│ IOC: M.E.Doc updater.exe (compromised)
+│ Hash: 8c29c2c7d10eef853bb54cb4f08e873c7eaf5b6d48476f14d8c6e1adb586bc5c
+▼
 [2] Dropper → Destructive Payload (EternalPetya)
-    │   IOC: payload.exe dropped to %TEMP%
-    ▼
-[3] Lateral Movement → SMB/PsExec/WMI
-    │   IOC: RemotePort 445 connections
-    │   Technique: T1021.002 SMB/Windows Admin Shares
-    ▼
-[4] Credential Theft → Mimikatz/LSASS
-    │   IOC: mimikatz.exe, procdump.exe
-    │   EventID: 4656, 4663 (LSASS access)
-    ▼
+│ IOC: payload.exe → %TEMP%
+▼
+[3] Lateral Movement → SMB / PsExec / WMI
+│ RemotePort 445 connections Technique T1021.002
+▼
+[4] Credential Theft → Mimikatz / LSASS
+│ IOC: mimikatz.exe procdump.exe EventIDs 4656 4663
+▼
 [5] MBR Overwrite + Network-Wide Wiper
-    │   IOC: MBR modification detected
-    │   Impact: Crypto-wipe routine execution
+│ IOC: MBR modification detected Impact: Crypto-wipe routine
 
-    
+
+
+---
+
 ### 🧩 3CX Supply-Chain Breach
-
-[1] Trojanized 3CXDesktopApp Update
-    │   Process: 3cxdesktopapp.exe (signed but compromised)
-    ▼
+[1] Trojanized 3CXDesktopApp (signed)
+│ IOC: 3cxdesktopapp.exe
+▼
 [2] DLL Sideloading → d3dcompiler_47.dll
-    │   IOC: d3dcompiler_47.dll (unsigned)
-    │   CVE: CVE-2013-3900 (Windows vulnerability)
-    ▼
+│ Unsigned DLL CVE-2013-3900 (AuthentiCode)
+▼
 [3] Malicious DLL → ICONICBEAST.SYS Driver
-    │   IOC: ICONICBEAST.SYS driver drop
-    │   Technique: T1547.012 Print Processors
-    ▼
-[4] Rundll32 → C2 Beacon
-    │   IOC: 209.141.49.118 (C2 IP)
-    │   Protocol: HTTPS beaconing
-    ▼
+│ Technique T1547.012 Print Processors
+▼
+[4] Rundll32 Execution → HTTPS C2
+│ IOC: 209.141.49.118 (C2 IP)
+▼
 [5] Persistence → Registry Run Key
-    │   Registry: HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-    │   IOC: 3CXDesktopApp persistence entry
-    ▼
-[6] Data Exfiltration → MISP-Enriched C2
-    │   MISP Tag: malware:3cx
-    │   TI Confidence: 90+
+│ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 
-   ###  🌐 F5 Internal Breach (2025 – UNC5221)
+---
 
-  [1] Compromised Development Environment
-    │   IOC: f5vpndriver.sys (malicious driver)
-    │   Technique: T1543.003 Windows Service
-    ▼
-[2] Token/Driver Abuse → Persistence
-    │   IOC: Token manipulation for persistence
-    │   Registry: HKLM\SYSTEM\CurrentControlSet\Services
-    ▼
+### 🌐 F5 Internal Breach (UNC5221 – 2025)
+
+[1] Compromised Development Environment
+│ IOC: f5vpndriver.sys (malicious signed driver)
+│ Technique T1543.003 Windows Service Creation
+▼
+[2] Token / Driver Abuse → Privileged Persistence
+│ Registry: HKLM\SYSTEM\CurrentControlSet\Services
+▼
 [3] Lateral Movement → Admin Shares + WMI
-    │   IOC: 185.159.82.18 (C2 IP)
-    │   Technique: T1021.002 SMB/Windows Admin Shares
-    ▼
-[4] Cloud Identity Pivot → OAuth App Abuse
-    │   IOC: "F5 Network Manager" OAuth app
-    │   Scopes: Files.ReadWrite.All, Directory.Read.All
-    ▼
-[5] Long-Dwell Data Exfiltration
-    │   Technique: TA0010 Exfiltration
-    │   Protocol: HTTPS to external IPs
+│ IOC: 185.159.82.18 (C2 IP) Technique T1021.002
+▼
+[4] Cloud Identity Pivot → OAuth App Impersonation
+│ App: "F5 Network Manager" Scopes: Files.ReadWrite.All Directory.Read.All
+▼
+[5] Long-Dwell Data Exfiltration (HTTPS)
 
-    
-### 🌐 NTT Data / Vectorform Subsidiary (2022–2025)
 
-[1] Subsidiary Credential Leak (GitHub/AWS)
-    │   IOC: Exposed credentials in repositories
-    │   Technique: T1552.001 Credentials in Files
-    ▼
-[2] Partner Portal Initial Access
-    │   IOC: ntt-orders[.]com (phishing domain)
-    │   IP: 45.133.216.177
-    ▼
+---
+
+### 🌐 NTT Data / Vectorform (2022 – 2025)
+
+[1] Subsidiary Credential Leak (GitHub / AWS)
+│ IOC: Exposed keys Technique T1552.001 Credentials in Files
+▼
+[2] Partner-Portal Initial Access
+│ Domain: ntt-orders[.]com IP: 45.133.216.177
+▼
 [3] Order Information System Exfiltration
-    │   IOC: Metadata theft from order systems
-    │   Volume: 18k client records
-    ▼
+│ Metadata of 18 000 client records Linked vendors: 14
+▼
 [4] Client Metadata Harvesting
-    │   Technique: T1591 Gathering Victim Org Information
-    │   Data: Client contact and order details
-    ▼
-[5] Downstream Social Engineering Campaigns
-    │   MISP Tag: attack-pattern:social-engineering
-    │   Impact: Supply-chain trust exploitation
-
-    
+│ Technique T1591 Gather Victim Org Information
+▼
+[5] Downstream Social-Engineering Campaigns
+│ Actor: "Coinbase Cartel" Tag: attack-pattern:social-engineering
 ---
 
 ## 🧮 Detection Strength by Attack (Native Rules Only)
