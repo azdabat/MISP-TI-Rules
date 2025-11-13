@@ -31,25 +31,25 @@ Each rule is annotated with:
 
 ### 🧱 SolarWinds (SUNBURST)
 [1] Build Compromise → Malicious DLL Injection
-│ IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
-▼
+IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)  → 
+
 [2] Signed Trojanized Update Distributed
-│ IOC: Valid SolarWinds code-signing certificate abused
-▼
+IOC: Valid SolarWinds code-signing certificate abused
+
 [3] Legit Process Loads Backdoor
-│ Process: SolarWinds.BusinessLayerHost.exe
-│ Loads: BusinessLayer.dll
-▼
+Process: SolarWinds.BusinessLayerHost.exe
+Loads: BusinessLayer.dll  → 
+
 [4] C2 Beacon → DGA Domains
-│ IOC: avsvmcloud[.]com IP: 13.59.205.66
-▼
+IOC: avsvmcloud[.]com IP: 13.59.205.66  → 
+
 [5] Lateral Movement → PsExec / WMIC
-│ Technique T1021.002 SMB / Admin Shares
-│ IOC: ADMIN$ share writes
-▼
+Technique T1021.002 SMB / Admin Shares
+IOC: ADMIN$ share writes  → 
+
 [6] Persistence → Registry + Scheduled Tasks
-│ IOC: svchelper.dll (secondary payload)
-│ Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+IOC: svchelper.dll (secondary payload)
+Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
 
 
 
