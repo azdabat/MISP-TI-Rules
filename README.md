@@ -57,58 +57,55 @@ Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
 
 ### 💀 NotPetya (M.E.Doc Supply Chain)
 [1] Trojanized Accounting Software Update
-│ IOC: M.E.Doc updater.exe (compromised)
-│ Hash: 8c29c2c7d10eef853bb54cb4f08e873c7eaf5b6d48476f14d8c6e1adb586bc5c
-▼
+IOC: M.E.Doc updater.exe (compromised)
+Hash: 8c29c2c7d10eef853bb54cb4f08e873c7eaf5b6d48476f14d8c6e1adb586bc5c  → 
+
 [2] Dropper → Destructive Payload (EternalPetya)
-│ IOC: payload.exe → %TEMP%
-▼
+IOC: payload.exe → %TEMP%  → 
+
 [3] Lateral Movement → SMB / PsExec / WMI
-│ RemotePort 445 connections Technique T1021.002
-▼
+RemotePort 445 connections Technique T1021.002  → 
+
 [4] Credential Theft → Mimikatz / LSASS
-│ IOC: mimikatz.exe procdump.exe EventIDs 4656 4663
-▼
+IOC: mimikatz.exe procdump.exe EventIDs 4656 4663  → 
+
 [5] MBR Overwrite + Network-Wide Wiper
-│ IOC: MBR modification detected Impact: Crypto-wipe routine
-
-
-
+IOC: MBR modification detected Impact: Crypto-wipe routine
 ---
 
 ### 🧩 3CX Supply-Chain Breach
 [1] Trojanized 3CXDesktopApp (signed)
-│ IOC: 3cxdesktopapp.exe
-▼
+IOC: 3cxdesktopapp.exe  → 
+
 [2] DLL Sideloading → d3dcompiler_47.dll
-│ Unsigned DLL CVE-2013-3900 (AuthentiCode)
-▼
+Unsigned DLL CVE-2013-3900 (AuthentiCode)  → 
+
 [3] Malicious DLL → ICONICBEAST.SYS Driver
-│ Technique T1547.012 Print Processors
-▼
+Technique T1547.012 Print Processors  → 
+
 [4] Rundll32 Execution → HTTPS C2
-│ IOC: 209.141.49.118 (C2 IP)
-▼
+IOC: 209.141.49.118 (C2 IP)  → 
+
 [5] Persistence → Registry Run Key
-│ HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 
 ---
 
 ### 🌐 F5 Internal Breach (UNC5221 – 2025)
 
 [1] Compromised Development Environment
-│ IOC: f5vpndriver.sys (malicious signed driver)
-│ Technique T1543.003 Windows Service Creation
-▼
+IOC: f5vpndriver.sys (malicious signed driver)
+Technique T1543.003 Windows Service Creation  → 
+
 [2] Token / Driver Abuse → Privileged Persistence
-│ Registry: HKLM\SYSTEM\CurrentControlSet\Services
-▼
-[3] Lateral Movement → Admin Shares + WMI
-│ IOC: 185.159.82.18 (C2 IP) Technique T1021.002
-▼
+Registry: HKLM\SYSTEM\CurrentControlSet\Services  → 
+
+[3] Lateral Movement → Admin Shares + WMI#
+IOC: 185.159.82.18 (C2 IP) Technique T1021.002  → 
+
 [4] Cloud Identity Pivot → OAuth App Impersonation
-│ App: "F5 Network Manager" Scopes: Files.ReadWrite.All Directory.Read.All
-▼
+App: "F5 Network Manager" Scopes: Files.ReadWrite.All Directory.Read.All  → 
+
 [5] Long-Dwell Data Exfiltration (HTTPS)
 
 
@@ -117,19 +114,19 @@ Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
 ### 🌐 NTT Data / Vectorform (2022 – 2025)
 
 [1] Subsidiary Credential Leak (GitHub / AWS)
-│ IOC: Exposed keys Technique T1552.001 Credentials in Files
-▼
+IOC: Exposed keys Technique T1552.001 Credentials in Files  → 
+
 [2] Partner-Portal Initial Access
-│ Domain: ntt-orders[.]com IP: 45.133.216.177
-▼
+Domain: ntt-orders[.]com IP: 45.133.216.177  → 
+
 [3] Order Information System Exfiltration
-│ Metadata of 18 000 client records Linked vendors: 14
-▼
+Metadata of 18 000 client records Linked vendors: 14  → 
+
 [4] Client Metadata Harvesting
-│ Technique T1591 Gather Victim Org Information
-▼
+Technique T1591 Gather Victim Org Information  → 
+
 [5] Downstream Social-Engineering Campaigns
-│ Actor: "Coinbase Cartel" Tag: attack-pattern:social-engineering
+Actor: "Coinbase Cartel" Tag: attack-pattern:social-engineering  
 ---
 
 ## 🧮 Detection Strength by Attack (Native Rules Only)
