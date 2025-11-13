@@ -8,7 +8,7 @@ This repository delivers **production-ready KQL threat-hunting rules** designed 
 
 📌 Note on Test Scope & Fidelity
 
-The detection coverage shown below is based on only a small subset of rules (native baseline rules vs a single advanced supply-chain drift rule). In a full production environment, running a broader rule set — including behavioural, identity, cloud, kernel-level, and TI-enriched detections — would significantly improve fidelity.
+The detection coverage shown below is based on only a small subset of rules (native baseline rules vs a single advanced supply-chain drift rule). In a full production environment, running a broader rule set including behavioural, identity, cloud, kernel-level, and TI-enriched detections would significantly improve fidelity.
 
 These results are therefore intended as a rough, high-level representation to illustrate how CTI-integrated confidence scoring, baseline drift detection, and multi-signal correlation can dramatically enhance visibility across complex supply-chain attack chains.
 
