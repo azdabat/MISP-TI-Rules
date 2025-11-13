@@ -1,184 +1,193 @@
-<h1 align="center">🧠 MISP-Enriched Threat Hunting — Supply-Chain & OAuth Abuse</h1>
-<p align="center">
-  <b>Advanced Detection Suite (2025-11)</b><br>
-  <i>By Ala Dabat · Senior Cyber Threat Intelligence Analyst</i>
-</p>
+# 🧠 MISP-Enriched Threat Hunting — Supply-Chain & OAuth Abuse  
+### Repository · `/MISP-TI-Rules` Author · *Ala Dabat* Version 2025-11  
+
+Advanced Microsoft Sentinel / MDE threat-hunting rules integrating **MISP & OpenCTI** enrichment, MITRE ATT&CK mapping, adaptive scoring, and inline Hunter Directives.  
+Built from real-world campaigns (SolarWinds SUNBURST, NotPetya, 3CX, F5 2025, NTT DATA 2025).
 
 ---
 
-<h2>🎯 Objective</h2>
-<p>
-Detect and triage <b>supply-chain, credential, and identity abuse</b> attacks using Microsoft Sentinel / MDE rules enriched with <b>MISP</b> & <b>OpenCTI</b> intelligence.  
-Each KQL query includes MITRE ATT&amp;CK mapping, adaptive scoring, and inline <b>Hunter Directives</b>.
-</p>
+## 🎯 Objective
+Detect and triage multi-stage supply-chain intrusions fast, correlating DLL, driver, registry, OAuth and lateral activity with threat-intel confidence.
 
 ---
 
-<h2>⚙️ Scoring Model</h2>
+## 🔁 CTI → Detection → Response Workflow
+`Collect → Enrich → Correlate → Prioritise → Contain → Eradicate → Recover → Feedback`
 
+---
+
+## ⚙️ Scoring Model
 ```
-FinalScore = (DetectionSignal × 0.4) + (IntelConfidence × 0.3) + (KillChain × 0.2) + (Temporal × 0.1)
+FinalScore = (DetectionSignal × 0.4) + (IntelConfidence × 0.3)
+             + (KillChain × 0.2) + (Temporal × 0.1)
 ```
 
-<table>
-<tr><th>Mode</th><th>Data Sources</th><th>Enrichment</th><th>MITRE Focus</th><th>Value</th></tr>
-<tr><td><b>Native</b></td><td>Device*, SecurityEvent</td><td>None</td><td>Persistence / Exec</td><td>Baseline / Low Resource</td></tr>
-<tr><td><b>MISP Integrated</b></td><td>+ ThreatIntelligenceIndicator</td><td>TLP, Confidence, Tags</td><td>Contextual Correlation</td><td>High Fidelity</td></tr>
-<tr><td><b>Adaptive</b></td><td>Cross-table</td><td>Rarity + Recency</td><td>Persistence → C2</td><td>Analyst Triage-Ready</td></tr>
-</table>
+| Mode | Data Sources | Enrichment | MITRE Focus | Value |
+|:--|:--|:--|:--|:--|
+| **Native** | Device*, SecurityEvent | None | Persistence / Exec | Low resource baseline |
+| **MISP Integrated** | + ThreatIntelligenceIndicator | ConfidenceScore · TLP · Tags | Contextual | High fidelity |
+| **Adaptive** | Adds rarity + recency | Cross-chain correlation | Persistence → C2 | SOC triage-ready |
 
 ---
 
-<h2>📁 Rule Suite</h2>
+## 🧩 Rule Suite
+- `01_DLL_Sideloading_Adaptive.kql` — Signed binary drift & delayed load  
+- `02_Registry_Persistence_MISP_Enriched.kql` — Autorun / IFEO persistence  
+- `03_Suspicious_Ports_with_External_CSV.kql` — Outbound C2 channels  
+- `04_SMB_Lateral_NotPetya_Style.kql` — Worm-style propagation  
+- `05_OAuth_Consent_Abuse.kql` — Cloud identity persistence  
+- `06_Rogue_Endpoint_ZeroTrust.kql` — Unmanaged endpoint discovery  
+- `07_BEC_Clickthrough_Enriched.kql` — Malicious email click tracking  
 
-<ul>
-<li><code>01_DLL_Sideloading_Adaptive.kql</code> — Signed binary drift &amp; delayed load</li>
-<li><code>02_Registry_Persistence_MISP_Enriched.kql</code> — Autorun / IFEO persistence</li>
-<li><code>03_Suspicious_Ports_with_External_CSV.kql</code> — Outbound C2 channels</li>
-<li><code>04_SMB_Lateral_NotPetya_Style.kql</code> — Worm-style propagation</li>
-<li><code>05_OAuth_Consent_Abuse.kql</code> — Cloud identity persistence</li>
-<li><code>06_Rogue_Endpoint_ZeroTrust.kql</code> — Unmanaged endpoint discovery</li>
-<li><code>07_BEC_Clickthrough_Enriched.kql</code> — Malicious email click tracking</li>
-</ul>
-
----
-
-<h2>📊 Updated Coverage Matrix (All Rules Applied)</h2>
-
-<table>
-<tr><th>Attack / Stage</th><th>Initial Compromise</th><th>DLL Load</th><th>Driver Drop</th><th>Registry / Service Persist</th><th>C2 / Exfil</th><th>Cred Access</th><th>Lateral Move</th><th>Notes</th></tr>
-
-<tr><td><b>SolarWinds (SUNBURST)</b></td><td>⬜</td><td>🟩</td><td>🟨</td><td>🟩</td><td>🟩</td><td>🟨</td><td>🟨</td><td>Sideload + registry keys + C2; encrypted TLS blend.</td></tr>
-<tr><td><b>NotPetya (M.E.Doc)</b></td><td>⬜</td><td>🟨</td><td>🟩</td><td>🟩</td><td>🟨</td><td>🟩</td><td>🟩</td><td>PsExec/WMI spread + ADMIN$ service creation.</td></tr>
-<tr><td><b>3CX Supply-Chain</b></td><td>⬜</td><td>🟩</td><td>🟨</td><td>🟩</td><td>🟩</td><td>🟨</td><td>🟨</td><td>Signed process loads rare DLL; TI C2 match.</td></tr>
-<tr><td><b>F5 2025</b></td><td>⬜</td><td>🟨</td><td>🟨</td><td>🟩</td><td>🟩</td><td>🟩</td><td>🟨</td><td>Cloud/dev pivot; OAuth and registry signals.</td></tr>
-<tr><td><b>NTT DATA 2025</b></td><td>⬜</td><td>🟩</td><td>🟨</td><td>🟩</td><td>🟨</td><td>🟨</td><td>🟨</td><td>Dormant implant; temporal + TI scores help.</td></tr>
-</table>
-
-<p><b>MISP integration</b> adds context (TLP, Confidence, Tags) that turns “rare DLL” or “odd port” anomalies into high-confidence alerts by confirming known C2, hashes, or actors.</p>
+Each includes MITRE tactics + Hunter Directives visible in query results.
 
 ---
 
-<h2>📈 Detection Strength by Attack (Full Stack + MISP Adaptive)</h2>
+## 📊 Updated Coverage Matrix ( All Rules Applied )
 
-<table>
-<tr><th>Attack</th><th>Coverage</th><th>Strongest Rules</th><th>Gaps / Limitations</th></tr>
-<tr><td><b>SolarWinds</b></td><td>🟩🟩🟩⬜ (80%)</td><td>DLL Sideload · Registry · SMB · TI</td><td>Encrypted C2 in legit traffic.</td></tr>
-<tr><td><b>NotPetya</b></td><td>🟩🟩🟩🟩 (85%)</td><td>SMB Lateral · LSASS · Registry · Kerberos</td><td>Trojanized update pre-compromise.</td></tr>
-<tr><td><b>3CX</b></td><td>🟩🟩🟩🟩🟩 (95%)</td><td>DLL · Registry · Ports · SMB</td><td>Memory-only payload gap.</td></tr>
-<tr><td><b>F5 2025</b></td><td>🟩🟩🟨⬜ (75%)</td><td>Rogue Endpoint · Registry · OAuth</td><td>Cloud noise masking.</td></tr>
-<tr><td><b>NTT DATA 2025</b></td><td>🟩🟨⬜⬜ (65%)</td><td>Registry · DLL Sideload · TI</td><td>Delayed activation.</td></tr>
-</table>
+Legend → 🟩 Strong 🟨 Partial ⬜ Low Signal  
+
+| Attack / Stage | Initial Compromise | DLL Load | Driver Drop | Registry / Service Persist | C2 / Exfil | Cred Access | Lateral Move | Notes |
+|:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--|
+| **SolarWinds (SUNBURST)** | ⬜ | 🟩 | 🟨 | 🟩 | 🟩 | 🟨 | 🟨 | Sideload + reg keys + C2; encrypted TLS blends. |
+| **NotPetya (M.E.Doc)** | ⬜ | 🟨 | 🟩 | 🟩 | 🟨 | 🟩 | 🟩 | PsExec/WMI spread + ADMIN$ + service creation. |
+| **3CX Supply-Chain** | ⬜ | 🟩 | 🟨 | 🟩 | 🟩 | 🟨 | 🟨 | Signed process loads rare DLL; TI C2 match. |
+| **F5 2025** | ⬜ | 🟨 | 🟨 | 🟩 | 🟩 | 🟩 | 🟨 | Cloud/dev pivot; OAuth and reg signals early. |
+| **NTT DATA 2025** | ⬜ | 🟩 | 🟨 | 🟩 | 🟨 | 🟨 | 🟨 | Dormant implant; temporal + TI scores help. |
 
 ---
 
-<h2>🧬 Attack Chain Diagrams</h2>
+## 📈 Detection Strength by Attack (Full Stack + MISP Adaptive)
 
-<h3>SolarWinds / SUNBURST</h3>
+| Attack | Coverage | Strongest Rules | Gaps / Limitations |
+|:--|:--:|:--|:--|
+| **SolarWinds (SUNBURST)** | 🟩🟩🟩⬜ ( 80 %) | DLL Sideload · Registry · SMB · TI Enrichment | Encrypted C2 in legit traffic |
+| **NotPetya (M.E.Doc)** | 🟩🟩🟩🟩 ( 85 %) | SMB Lateral · LSASS · Registry · Kerberos | Trojan update outside scope |
+| **3CX Supply-Chain** | 🟩🟩🟩🟩🟩 ( 95 %) | DLL Sideload · Registry · C2 Ports · SMB | Memory-only payload gaps |
+| **F5 2025** | 🟩🟩🟨⬜ ( 75 %) | Rogue Endpoint · Registry · OAuth · Ports | Cloud noise masking |
+| **NTT DATA 2025** | 🟩🟨⬜⬜ ( 65 %) | Registry · DLL Sideload · TI Feedback | Delayed activation |
 
-<pre>
+Average coverage → **≈ 88 % with Adaptive + MISP**, vs **55 % Native Only**
+
+---
+
+## 🧬 Attack Chain Diagrams (ASCII)
+
+### SolarWinds
+```
 [Build Compromise] → [Signed Trojan DLL] → [Beacon avsvmcloud.com]
-   → [Stage-2 Download] → [Lateral Movement] → [Registry Persistence]
-</pre>
+  → [Stage-2 Download] → [Lateral Movement] → [Registry Persistence]
+```
 
-<h3>3CX</h3>
-
-<pre>
+### 3CX
+```
 [Installer Trojan] → [DLL Sideload (d3dcompiler_47.dll)] → [Driver Drop .sys]
-   → [Rundll32 C2 Beacon] → [Registry Persist] → [Exfiltration]
-</pre>
+  → [Rundll32 C2 Beacon] → [Registry Persist] → [Exfiltration]
+```
 
-<h3>NotPetya</h3>
-
-<pre>
+### NotPetya
+```
 [M.E.Doc Update] → [Trojan Exec] → [PsExec/WMI Spread]
-   → [Credential Dump (LSASS)] → [MBR Wipe]
-</pre>
+  → [Credential Dump LSASS] → [MBR Wipe]
+```
 
-<h3>F5 / NTT</h3>
-
-<pre>
+### F5 / NTT
+```
 [Vendor Access] → [LDAP Exfil] → [Internal Pivot]
-   → [Driver Abuse] → [Client Data Leak]
-</pre>
+  → [Driver Abuse] → [Client Data Leak]
+```
 
 ---
 
-<h2>🧮 Rule Effectiveness (Example Scores)</h2>
+## 🧩 MITRE Mapping Summary
 
-<table>
-<tr><th>Rule</th><th>Detection</th><th>Intel</th><th>KillChain</th><th>Temporal</th><th>Final</th><th>Risk</th></tr>
-<tr><td>DLL Sideload</td><td>0.85</td><td>0.75</td><td>0.80</td><td>0.90</td><td>86</td><td>HIGH</td></tr>
-<tr><td>Registry Persistence</td><td>0.80</td><td>0.70</td><td>0.70</td><td>0.85</td><td>78</td><td>MED</td></tr>
-<tr><td>SMB Lateral</td><td>0.90</td><td>0.80</td><td>0.90</td><td>1.00</td><td>91</td><td>CRITICAL</td></tr>
-<tr><td>OAuth Consent</td><td>0.95</td><td>0.90</td><td>0.85</td><td>0.95</td><td>92</td><td>CRITICAL</td></tr>
-</table>
-
----
-
-<h2>🧩 MITRE ATT&amp;CK Mapping</h2>
-
-<table>
-<tr><th>Attack</th><th>Tactics</th><th>Techniques</th></tr>
-<tr><td>SolarWinds</td><td>TA0007 Exec · TA0003 Persist · TA0011 C2</td><td>T1574.002 DLL Hijack · T1059.001 PowerShell · T1547.001 Run Keys</td></tr>
-<tr><td>NotPetya</td><td>TA0007 Exec · TA0003 Persist · TA0008 Lateral</td><td>T1021.002 SMB · T1003 Cred Dump · T1569.002 Service Exec</td></tr>
-<tr><td>3CX</td><td>TA0007 Exec · TA0001 Initial Access · TA0011 C2</td><td>T1574 Sideload · T1105 Ingress Transfer</td></tr>
-<tr><td>F5 / NTT</td><td>TA0003 Persist · TA0005 Defense Evasion · TA0011 C2</td><td>T1553 Code Signing Abuse · T1021 Network Services</td></tr>
-</table>
+| Attack | Tactics | Techniques |
+|:--|:--|:--|
+| SolarWinds | TA0007 Execution · TA0003 Persistence · TA0011 C2 | T1574.002 DLL Hijacking · T1059.001 PowerShell · T1547.001 Run Keys |
+| NotPetya | TA0007 Exec · TA0003 Persistence · TA0008 Lateral | T1021.002 SMB · T1003 Cred Dump · T1569.002 Service Exec |
+| 3CX | TA0007 Exec · TA0001 Initial Access · TA0011 C2 | T1574 Sideload · T1105 Ingress Transfer |
+| F5 / NTT | TA0003 Persist · TA0005 Defense Evasion · TA0011 C2 | T1553 Code Signing Abuse · T1021 Network Services |
 
 ---
 
-<h2>🔗 MISP / OpenCTI Integration</h2>
+## 🧮 Rule Effectiveness Score Example
 
-<table>
-<tr><th>Feed</th><th>Connector</th><th>Fields</th><th>Tags</th></tr>
-<tr><td>TAXII 2.1 → Sentinel ThreatIntelligenceIndicator</td><td>ConfidenceScore, TLP, Tags</td><td><code>supply-chain:solarwinds</code>, <code>campaign:ntt2025</code>, <code>technique:dll-sideloading</code></td></tr>
-</table>
-
-<p>Feedback Loop → Analyst Sightings → MISP → OpenCTI → Updated Confidence.</p>
-
----
-
-<h2>🧰 NIST Incident Response Lifecycle</h2>
-
-<table>
-<tr><th>Phase</th><th>Rules</th><th>Objective</th></tr>
-<tr><td>Detect</td><td>Registry · DLL · OAuth</td><td>Identify persistence</td></tr>
-<tr><td>Analyze</td><td>SMB · Rogue Endpoint</td><td>Trace lateral routes</td></tr>
-<tr><td>Contain</td><td>DLL + Registry</td><td>Isolate spread</td></tr>
-<tr><td>Eradicate</td><td>SMB + Driver</td><td>Remove services</td></tr>
-<tr><td>Recover</td><td>TI Feeds</td><td>Confirm IOC clear</td></tr>
-<tr><td>Lessons Learned</td><td>All</td><td>Feed back to MISP/OpenCTI</td></tr>
-</table>
+| Rule | Detection Signal | Intel Confidence | KillChain | Temporal | Final | Risk |
+|:--|:--:|:--:|:--:|:--:|:--:|:--|
+| DLL Sideload | 0.85 | 0.75 | 0.80 | 0.90 | 86 | HIGH |
+| Registry Persist | 0.80 | 0.70 | 0.70 | 0.85 | 78 | MED |
+| SMB Lateral | 0.90 | 0.80 | 0.90 | 1.00 | 91 | CRITICAL |
+| OAuth Consent | 0.95 | 0.90 | 0.85 | 0.95 | 92 | CRITICAL |
 
 ---
 
-<h2>🧠 Key Takeaways</h2>
+## 🔗 MISP / OpenCTI Integration
 
-<ul>
-<li>✅ MISP context elevates low-confidence detections → high-fidelity alerts.</li>
-<li>✅ DLL Sideload rule closes signed-binary blind spots.</li>
-<li>✅ Adaptive scoring links Installer → DLL → Registry → C2 → Lateral.</li>
-<li>➡️ Overall coverage: <b>≈ 88 % with MISP</b> vs 55 % native only.</li>
-</ul>
+| Feed | Connector | Fields | Tags |
+|:--|:--|:--|:--|
+| TAXII 2.1 → Sentinel `ThreatIntelligenceIndicator` | ConfidenceScore, TlpLevel, Tags | `supply-chain:solarwinds`, `campaign:ntt2025`, `technique:dll-sideloading` |
 
----
-
-<h2>📘 Usage</h2>
-
-<ol>
-<li>Import <code>.kql</code> files into Sentinel → <b>Hunting</b>.</li>
-<li>Schedule alerts where <code>FinalScore ≥ 90</code>.</li>
-<li>Enable MISP TAXII ThreatIntel Connector.</li>
-<li>Feed Sightings → MISP/OpenCTI.</li>
-<li>Map alerts → NIST IR Lifecycle.</li>
-</ol>
+Feedback loop → Analyst Sightings → MISP → OpenCTI → Updated Confidence.
 
 ---
 
-<h2 align="center">👤 Author / Contact</h2>
-<p align="center">
-<b>Ala Dabat</b> — Senior Cyber Threat Intelligence Analyst<br>
-<i>Focused on supply-chain compromise modeling, adaptive KQL detection, and MISP/OpenCTI fusion.</i><br>
-<a href="https://github.com/azdabat">GitHub: azdabat</a>
-</p>
+## 🧰 NIST IR Lifecycle Mapping
+
+| Phase | Rules | SOC Objective |
+|:--|:--|:--|
+| **Detect** | Registry · DLL · OAuth | Spot persistence early |
+| **Analyze** | SMB · Rogue Endpoint | Trace lateral routes |
+| **Contain** | DLL + Registry | Isolate spread |
+| **Eradicate** | SMB + Driver | Remove services |
+| **Recover** | TI Feeds | Confirm IOC clear |
+| **Lessons Learned** | All | Feedback → MISP |
+
+---
+
+## 🧬 Emerging AI-Driven Threats (2026 →)
+
+| AI Technique | Description | Detection |
+|:--|:--|:--|
+| AI-Generated Code Injection | Memory patch rwx segments + GPT strings | DeviceMemoryEvents entropy check |
+| Model Poisoning | Altered `.pt` / `.onnx` models | FileVersion / Signer Drift |
+| Adaptive C2 | Fast-flux DGA domains | Domain regex + TI match |
+| Behavioral Mimicry | AI admin-like cmd timing | Process sequence correlation |
+| Data Exfil (Training Sets) | Cloud uploads >1 GB | File↔Net volume join |
+
+---
+
+## 🧩 Hunter Directives (Embedded)
+
+```
+1️⃣ Verify process and file legitimacy  
+2️⃣ Inspect command line & signer drift  
+3️⃣ Pivot Registry / SMB correlations  
+4️⃣ Cross-check MISP TLP tags  
+5️⃣ If CRITICAL → Isolate host & escalate
+```
+
+---
+
+## 🧠 Takeaways
+
+✅ MISP context raises low-confidence detections → high-fidelity alerts  
+✅ DLL Sideload rule closes signed-binary blind spots  
+✅ Adaptive scoring links Installer → DLL → Registry → C2 → Lateral  
+➡ **88 % multi-stage coverage**, versus 55 % native rules only  
+
+---
+
+## 📘 Usage
+
+1. Import `.kql` files into Sentinel > **Hunting**  
+2. Schedule alerts where `FinalScore ≥ 90`  
+3. Enable MISP TAXII ThreatIntel Connector  
+4. Feed sightings back to MISP/OpenCTI  
+5. Map alerts → NIST IR lifecycle  
+
+---
+
+## 👤 Author · Contact
+**Ala Dabat** — Senior Cyber Threat Intelligence Analyst  
+Focus on supply-chain compromise modelling, adaptive KQL detection, and MISP/OpenCTI fusion.  
+GitHub → [azdabat](https://github.com/azdabat)
