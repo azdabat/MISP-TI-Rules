@@ -1,4 +1,4 @@
-# 🧩 Supply-Chain Compromise / Signed Binary Drift & DLL-Driver Abuse Detection
+# Supply-Chain Compromise / Signed Binary Drift & DLL-Driver Abuse Detection
 **Author:** Ala Dabat  
 **Platform:** Microsoft Defender / Sentinel (Advanced Hunting – Native KQL)  
 **Classification:** L3 Threat Hunt / Analytic Rule  
@@ -7,7 +7,7 @@
 
 ---
 
-## 🔍 Overview
+##  Overview
 This rule detects **supply-chain compromises** and **signed binary abuse** on endpoints by correlating:
 - Signed but **tampered vendor binaries** (version/signature drift)
 - **DLL sideloading** and **driver injection** abuse
@@ -19,7 +19,7 @@ It introduces **integrity-drift analytics** to identify binaries whose signature
 
 ---
 
-## ⚙️ Detection Logic Summary
+##  Detection Logic Summary
 
 Signed Orion process
 ↓ loads
@@ -28,11 +28,11 @@ Trojanized BusinessLayerHost.dll
 ↓ registry persist (ServiceDll)
 ↓ driver drop / C2 beacon
 
-✅ Detected through **DormantVeryLong + SignerDrift + Registry persistence**
+ Detected through **DormantVeryLong + SignerDrift + Registry persistence**
 
 ---
 
-### 2️⃣ 3CX Compromise
+### 2 3CX Compromise
 
 
 3cxdesktopapp.exe (signed)
@@ -40,11 +40,11 @@ Trojanized BusinessLayerHost.dll
 d3dcompiler_47.dll (malicious)
 ↓ fast-load & network C2
 
-✅ Detected via **VendorProcess + FastLoad + Unsigned DLL**
+ Detected via **VendorProcess + FastLoad + Unsigned DLL**
 
 ---
 
-### 3️⃣ F5 BIG-IP Breach
+### 3️ F5 BIG-IP Breach
 
 
 Vendor service binary (signed)
@@ -52,11 +52,11 @@ Vendor service binary (signed)
 Injected DLL → drops signed driver
 ↓ reactivated after reboot
 
-✅ Detected via **DriverLoad + DormantLong + Registry persistence**
+ Detected via **DriverLoad + DormantLong + Registry persistence**
 
 ---
 
-## 🧭 SOC Hunter Directives
+##  SOC Hunter Directives
 Each alert includes structured guidance in the `HunterDirectives` column:
 
 1. Review loader process & signer integrity  
@@ -70,7 +70,7 @@ Each alert includes structured guidance in the `HunterDirectives` column:
 
 ---
 
-## 🧩 False-Positive Guidance
+##  False-Positive Guidance
 | Source | Mitigation |
 |---------|-------------|
 | Legitimate vendor update | Validate signer + version in vendor release notes |
@@ -79,7 +79,7 @@ Each alert includes structured guidance in the `HunterDirectives` column:
 
 ---
 
-## 🧩 Deployment Notes
+##  Deployment Notes
 - Designed for **native use** in Microsoft Defender / Sentinel Advanced Hunting.  
 - No external TI feeds required.  
 - Can be promoted to **Analytic Rule** with alert automation using `Severity=="ALERT"`.  
@@ -87,7 +87,7 @@ Each alert includes structured guidance in the `HunterDirectives` column:
 
 ---
 
-## 🧩 Expected Results
+##  Expected Results
 | Attack Vector | Detection | Confidence |
 |----------------|------------|-------------|
 | Vendor binary tampering | ✅ | 🔥 High |
@@ -98,7 +98,7 @@ Each alert includes structured guidance in the `HunterDirectives` column:
 
 ---
 
-## 🧩 Recommendations
+##  Recommendations
 - Add **continuous baseline jobs** for version/signer tracking every 7 days.  
 - Integrate **hash drift** with your asset inventory or CMDB for supply-chain integrity monitoring.  
 - Maintain an **allowlist file** for legitimate vendor updates (auto-expire after 30 days).  
@@ -106,7 +106,7 @@ Each alert includes structured guidance in the `HunterDirectives` column:
 
 ---
 
-## 📄 License & Attribution
+##  License & Attribution
 © 2025 Ala Dabat – MIT License.  
 Free to use, modify, and redistribute with attribution.  
 If reused, reference this repo as:  
@@ -114,7 +114,7 @@ If reused, reference this repo as:
 
 ---
 
-### 🧱 Tags
+###  Tags
 `#KQL` `#DetectionEngineering` `#SupplyChain` `#DLLHijacking`  
 `#DriverAbuse` `#MITREATTACK` `#ThreatHunting` `#IntegrityMonitoring`
 
@@ -130,7 +130,7 @@ If reused, reference this repo as:
 
 ---
 
-## 🧠 Detection Methodology
+##  Detection Methodology
 
 The rule computes:
 - **BehaviorScore** → Execution timing, rarity, unsigned state, vendor loader
@@ -147,7 +147,7 @@ Then classifies as:
 
 ---
 
-## 🧩 MITRE ATT&CK Mapping
+##  MITRE ATT&CK Mapping
 | Tactic | Technique ID | Description |
 |--------|---------------|-------------|
 | **Persistence** | `T1547.*` | Registry & service DLL persistence |
@@ -159,7 +159,7 @@ Then classifies as:
 
 ---
 
-## 🧩 Detection Capabilities by Attack Type
+##  Detection Capabilities by Attack Type
 
 | Attack Type | Example | Coverage |
 |--------------|----------|-----------|
@@ -173,14 +173,14 @@ Then classifies as:
 
 ---
 
-## 🧩 Example Attack Chains Detected
+##  Example Attack Chains Detected
 
-### 1️⃣ SolarWinds / SUNBURST Pattern
+### 1️ SolarWinds / SUNBURST Pattern
 
 
 ---
 
-## 🔁 End-to-End Flow Summary
+##  End-to-End Flow Summary
 
 1. **File Drop / Modification:** Suspicious DLL or SYS created on host.  
 2. **Execution:** File loaded by signed vendor process (e.g., 3CX.exe).  
@@ -192,7 +192,7 @@ Then classifies as:
 
 ---
 
-### 📊 Visualization Summary
+###  Visualization Summary
 - **Blue boxes (Process/File telemetry)** → `DeviceFileEvents`, `DeviceImageLoadEvents`
 - **Orange boxes (Persistence / Drift)** → `DeviceRegistryEvents`, `IntegrityDrift`
 - **Green boxes (Execution / Network)** → `DeviceEvents`, `DeviceNetworkEvents`
