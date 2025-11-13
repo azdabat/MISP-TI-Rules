@@ -18,8 +18,6 @@ In a full production deployment with 30–50 complementary rules, overall detect
 
 🔧 🧩 How Each Rule Contributed to Detection Fidelity
 
-(Ready for README.md)
-
 1. Registry Persistence Detection (MISP-Enriched & Adaptive)
 
 This rule uncovers persistence, credential theft, encoded payloads, COM hijacking, IFEO injection, LSA DLL tampering, and C2 beaconing.
