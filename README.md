@@ -6,6 +6,12 @@
 ## 🎯 Overview
 This repository delivers **production-ready KQL threat-hunting rules** designed for **Microsoft Sentinel** and **Defender for Endpoint**, integrating **MISP Threat Intelligence** and **OpenCTI enrichment** to achieve high-fidelity detection of complex threats — from **supply-chain compromises** (SolarWinds, 3CX, NotPetya, NTT Data) to **OAuth consent abuse** and **driver/DLL sideloading persistence**.
 
+📌 Note on Test Scope & Fidelity
+
+The detection coverage shown above is based on only a small subset of rules (native baseline rules vs a single advanced supply-chain drift rule). In a full production environment, running a broader rule set — including behavioural, identity, cloud, kernel-level, and TI-enriched detections — would significantly improve fidelity.
+
+These results are therefore intended as a rough, high-level representation to illustrate how CTI-integrated confidence scoring, baseline drift detection, and multi-signal correlation can dramatically enhance visibility across complex supply-chain attack chains.
+
 Each rule is annotated with:
 - Inline **MITRE ATT&CK tactics & techniques**
 - **Hunter Directives** (actionable SOC guidance)
@@ -209,19 +215,19 @@ Your L3 Rule:   🟩🟩🟩🟨⬜  (75%)
 
 ### **NotPetya (M.E.Doc)**
 Native Rule:    🟩🟩🟩⬜⬜  (60%)  
-Your L3 Rule:   🟩🟩🟩🟩⬜  (85%)
+My L3 Rule:   🟩🟩🟩🟩⬜  (85%)
 
 ### **3CX Supply Chain**
 Native Rule:    🟩🟨⬜⬜⬜  (35%)  
-Your L3 Rule:   🟩🟩🟩🟩⬜  (90%)
+My L3 Rule:   🟩🟩🟩🟩⬜  (90%)
 
 ### **NTT Data / Vectorform**
 Native Rule:    🟩🟨⬜⬜⬜  (40%)  
-Your L3 Rule:   🟩🟩🟩🟩⬜  (90%)
+My L3 Rule:   🟩🟩🟩🟩⬜  (90%)
 
 ### **F5 / UNC5221 (Malicious Driver + OAuth Pivot)**
 Native Rule:    🟨⬜⬜⬜⬜  (15%)  
-Your L3 Rule:   🟩🟩🟩🟨⬜  (80%)
+My L3 Rule:   🟩🟩🟩🟨⬜  (80%)
 
 ---
 
@@ -374,6 +380,12 @@ These directives ensure **tier-2/3 analysts** execute consistent triage across e
 ### 🧩 Detection Flow Summary (End-to-End)
 
 Suspicious Process → DLL Drop → Registry Persistence → Network C2 → TI Match → Scored + Mapped → Analyst Directive
+
+📌 Note on Test Scope & Fidelity
+
+The detection coverage shown above is based on only a small subset of rules (native baseline rules vs a single advanced supply-chain drift rule). In a full production environment, running a broader rule set — including behavioural, identity, cloud, kernel-level, and TI-enriched detections — would significantly improve fidelity.
+
+These results are therefore intended as a rough, high-level representation to illustrate how CTI-integrated confidence scoring, baseline drift detection, and multi-signal correlation can dramatically enhance visibility across complex supply-chain attack chains.
 
 
 **Final Output:**  
