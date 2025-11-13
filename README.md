@@ -30,28 +30,25 @@ Each rule is annotated with:
 ## 🧠 Supply-Chain Attack Chains (ASCII)
 
 ### 🧱 SolarWinds (SUNBURST)  
+
 [1] Build Compromise → Malicious DLL Injection
-    │   IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
-    │   Hash: 019085a76ba7126fff22770d71bd901c325fc68ac55aa743327984e89f4b0134
-    ▼
+     │  IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
+     ▼
 [2] Signed Trojanized Update Distributed
-    │   IOC: Valid SolarWinds code signing certificate abused
-    ▼
-[3] Legitimate Process Loads Backdoor
-    │   Process: SolarWinds.BusinessLayerHost.exe
-    │   IOC: Loads malicious BusinessLayer.dll
-    ▼
+     │  IOC: Valid SolarWinds certificate abused
+     ▼
+[3] Legit Process Loads Backdoor
+     │  SolarWinds.BusinessLayerHost.exe → loads BusinessLayer.dll
+     ▼
 [4] C2 Beacon → DGA Domains
-    │   IOC: avsvmcloud[.]com
-    │   IP: 13.59.205.66
-    ▼
+     │  avsvmcloud[.]com → victim-specific subdomains
+     ▼
 [5] Lateral Movement → PsExec/WMIC
-    │   Technique: T1021.002 SMB/Windows Admin Shares
-    │   IOC: ADMIN$ share writes
-    ▼
-[6] Persistence → Scheduled Tasks + Registry
-    │   IOC: svchelper.dll (secondary payload)
-    │   Registry: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+     │  ADMIN$ writes + service creation
+     ▼
+[6] Persistence → Registry + Scheduled Tasks
+     │  svchelper.dll dropped
+
 
     
 ### 💀 NotPetya (M.E.Doc Supply Chain)
