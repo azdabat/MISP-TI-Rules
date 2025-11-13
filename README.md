@@ -30,26 +30,44 @@ Each rule is annotated with:
 # 🧩 Supply-Chain Attack Chains (ASCII Diagrams)
 
 ### 🧱 SolarWinds (SUNBURST)
-[1] Build Compromise → Malicious DLL Injection
-IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)  → 
 
-[2] Signed Trojanized Update Distributed
-IOC: Valid SolarWinds code-signing certificate abused
+[1] Build Pipeline Compromise  
+    • SUNSPOT implant inserted into SolarWinds build server  
+    • Replaced: SolarWinds.Orion.Core.BusinessLayer.dll  
+    Tactic: Initial Access | T1195.002 (Compromise Software Supply Chain)
 
-[3] Legit Process Loads Backdoor
-Process: SolarWinds.BusinessLayerHost.exe
-Loads: BusinessLayer.dll  → 
+[2] Trojanized Signed Update Distributed  
+    • Signed with SolarWinds' legitimate certificate  
+    IOC: SolarWinds-Orion-Core-BusinessLayer.dll (Trojanized)
+    Tactic: Execution | T1553.002 (Signed Binary Proxy Execution)
 
-[4] C2 Beacon → DGA Domains
-IOC: avsvmcloud[.]com IP: 13.59.205.66  → 
+[3] Backdoor Activation in Legit Orion Process  
+    • Host process: SolarWinds.BusinessLayerHost.exe  
+    • Loads malicious BusinessLayer.dll → SUNBURST backdoor  
+    Capability: Timed execution, environment checks
 
-[5] Lateral Movement → PsExec / WMIC
-Technique T1021.002 SMB / Admin Shares
-IOC: ADMIN$ share writes  → 
+[4] C2 Communication (Dormant → Active)
+    • DNS-based C2 → avsvmcloud[.]com (rotating subdomains)  
+    • AWS IP infrastructure: 13.59.205.66  
+    Tactic: Command & Control | T1071.004 (DNS)
 
-[6] Persistence → Registry + Scheduled Tasks
-IOC: svchelper.dll (secondary payload)
-Reg Key: HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+[5] Second-Stage Payload: TEARDROP / RAINDROP  
+    • Delivered selectively to high-value targets  
+    • Loaded into memory (Cobalt Strike BEACON)
+
+[6] Lateral Movement  
+    • PsExec / WMI / Azure AD Token Abuse  
+    • Golden SAML forgery (critical missing stage)  
+    Tactic: Credential Access | T1550.001  
+    Tactic: Lateral Movement | T1021.002
+
+[7] Persistence  
+    • Scheduled Tasks  
+    • Registry Run keys  
+    IOC: svchelper.dll (TEARDROP/RAINDROP loaders)
+
+
+
 
 
 
