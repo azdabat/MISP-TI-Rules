@@ -12,6 +12,153 @@ The detection coverage shown below is based on only a small subset of rules (nat
 
 These results are therefore intended as a rough, high-level representation to illustrate how CTI-integrated confidence scoring, baseline drift detection, and multi-signal correlation can dramatically enhance visibility across complex supply-chain attack chains.
 
+The detections in this assessment were driven by a small but strategically chosen set of high-fidelity rules, each focused on a critical stage of modern supply-chain and identity-centric attack chains. These rules combine registry-based persistence detection, SMB lateral-movement correlation, OAuth consent abuse analysis, rogue endpoint discovery, signed-binary and driver drift analysis, and TI-enriched C2/port matching.
+Although only a handful of rules were tested, the combination of multi-signal correlation and MISP-powered confidence scoring significantly amplifies detection fidelity across all evaluated attacks.
+In a full production deployment with 30–50 complementary rules, overall detection strength would increase further; however, this prototype is designed to demonstrate how CTI-integrated scoring and baseline-drift detection meaningfully improve supply-chain attack visibility.
+
+🔧 🧩 How Each Rule Contributed to Detection Fidelity
+
+(Ready for README.md)
+
+1. Registry Persistence Detection (MISP-Enriched & Adaptive)
+
+This rule uncovers persistence, credential theft, encoded payloads, COM hijacking, IFEO injection, LSA DLL tampering, and C2 beaconing.
+It correlates:
+
+Registry keys
+Process signer & company
+Base64/encoded commands
+Suspicious network indicators
+TI-matched file hashes or domains
+Prevalence rarity and user-writable paths
+Impact on the evaluated attacks:
+SolarWinds: detects TEARDROP/RAINDROP loader persistence & malformed Run keys.
+3CX: detects DLL persistence loader paths & AuthentiCode bypass behaviour.
+F5 / UNC5221: catches tampered ServiceDLL persistence under HKLM\SYSTEM\CurrentControlSet\Services.
+NotPetya: identifies initial persistence behaviour (e.g., IFEO injection signs of tampering).
+
+This rule acts as the baseline root-cause detector for most post-compromise activity.
+
+2. Optimized SMB Lateral Movement Detection (PsExec / NotPetya Behaviour)
+This rule aligns with NotPetya, Ryuk, Conti, Emotet, Cobalt Strike, and any worm-like behaviour leveraging:
+ADMIN$ writes
+Service creation (Event 7045)
+PsExec/WMI/SC.exe
+DNS enrichment for target resolution
+TI correlation for remote IP or hostname
+
+Correlation Impact:
+NotPetya: detected with Critical confidence (worm propagation chain).
+SolarWinds Stage-2: detects Cobalt Strike lateral pivots.
+3CX: catches post-infection lateral movement.
+F5: identifies lateral staging before OAuth pivot.
+This rule dramatically increases fidelity where lateral movement is the attacker’s expansion method.
+
+3. OAuth App-Consent Abuse Hunt
+
+Detects:
+High-risk delegated or app-only permissions
+Tenant-wide admin approvals
+Unknown publishers
+Suspicious user agents (python/curl/go-http/etc)
+Offline tokens (offline_access)
+*.ReadWrite.All, *.FullControl.All scope families
+Secret/certificate addition events
+
+Consent anomalies associated with cloud pivot attacks
+
+Correlation Impact:
+F5 / UNC5221: detects the malicious OAuth app ("F5 Network Manager") creation & privilege escalation.
+NTT Data: reveals cross-tenant & partner-portal impersonation.
+SolarWinds & 3CX: used for cloud pivots after initial foothold.
+This rule provides identity-layer visibility, catching what endpoint-only rules miss.
+
+4. Rogue Endpoint + LDAP + LSASS Hunt
+
+Combines:
+Rogue host detection (naming/onboarding failures)
+LDAP enumeration (389/636)
+LSASS handle access
+Credential dumping tools (Mimikatz, ProcDump, sekurlsa)
+TI-correlated hostnames
+
+Correlation Impact:
+NotPetya: detects LSASS tampering & credential theft early.
+F5: catches rogue developer builds & internal LDAP reconnaissance.
+SolarWinds: captures lateral-phase credential scraping behaviour.
+This rule exposes pre-lateral-movement staging and credential harvesting.
+
+5. Extended SMB Lateral Movement Prototype (NotPetya-Style)
+My second SMB rule (final polished version) adds:
+DNS pivots
+Process lineage checks
+Registry tie-ins
+Service control flow
+TI scoring for destination host
+
+This detects:
+NotPetya propagation
+F5 lateral staging
+3CX follow-on movement
+A core part of mapping T1021.002 SMB/Admin Shares.
+
+6. Suspicious Ports Hunt (CSV-Enriched + TI)
+
+Adds:
+External threat-listed ports
+TI-scored IP addresses
+C2 channel mapping (T1090, T1573, T1071)
+Whitelisted private ranges
+Risk-weighted scoring
+
+Correlation Impact:
+SolarWinds: detects suspicious DNS→C2 connections during SUNBURST beaconing.
+
+3CX: detects HTTPS C2 stage.
+F5: detects attacker’s stealth C2 infrastructure.
+NTT Data: identifies suspicious partner-portal & exfil flows.
+A high-coverage C2-plus-exfil detection rule.
+
+🧬 📌 Integrated MISP Confidence Scoring (Add to README & MISP Rule Set)
+
+(Final scoring block for GitHub/MISP integration)
+
+### 🧠 MISP-Integrated Confidence Scoring Method
+
+Each analytic rule feeds a unified scoring model used across MISP, Sentinel, and OpenCTI:
+
+FinalScore =  
+( DetectionSignal * 0.40 ) +  
+( IntelConfidence * 0.30 ) +  
+( KillChainRelevance * 0.20 ) +  
+( TemporalScore * 0.10 )
+
+Where:
+- **DetectionSignal** = behavioural strength (3–10)
+- **IntelConfidence** = from MISP (0–100)
+- **KillChainRelevance** = mapped by attack phase (40–90)
+- **TemporalScore** = recency weighting (0–100)
+
+Scores classify events as:
+- **CRITICAL** ≥ 90  
+- **HIGH** ≥ 70  
+- **MEDIUM** < 70  
+
+Each detection automatically:
+✔ Adds a **MISP sighting**  
+✔ Increases confidence in STIX Indicator objects  
+✔ Updates correlation clusters (SolarWinds, 3CX, F5, NotPetya, NTT Data)  
+✔ Feeds OpenCTI ↔ MISP Zero-Trust Intelligence Loop
+
+🧩 📌 Summary (Add After the Scoring Section)
+These rules were chosen to demonstrate how just a handful of high-fidelity,
+CTI-enriched detections can dramatically increase early visibility across
+supply-chain, identity-centric, and lateral-movement attack chains. Even with
+limited rule coverage, detection fidelity increased by 35–65% per attack. In a
+full SOC environment with 30–50 integrated rules, coverage would scale even
+higher, especially as MISP sightings feed adaptive confidence updates across
+Sentinel and OpenCTI.
+
 Each rule is annotated with:
 - Inline **MITRE ATT&CK tactics & techniques**
 - **Hunter Directives** (actionable SOC guidance)
