@@ -30,7 +30,6 @@ Each rule is annotated with:
 ## 🧠 Supply-Chain Attack Chains (ASCII)
 
 ### 🧱 SolarWinds (SUNBURST)  
-
 [1] Build Compromise → Malicious DLL Injection
     │   IOC: SolarWinds.Orion.Core.BusinessLayer.dll (trojanized)
     │   Hash: 019085a76ba7126fff22770d71bd901c325fc68ac55aa743327984e89f4b0134
