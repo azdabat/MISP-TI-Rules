@@ -1,0 +1,206 @@
+// ======================================================================
+// OAuth App-Consent Threat Hunt (Optimised + CTI/MISP Scoring + MITRE)
+// Author: Ala Dabat
+// Purpose: Detect malicious OAuth consent grants, app-only pivots,
+//          high-risk permissions, suspicious user agents, and tenant-wide abuse.
+// ======================================================================
+
+let Lookback = 30d;
+
+// -----------------------------
+// Baselines / Safe Lists
+// -----------------------------
+let KnownSafeApps = dynamic([
+  "Microsoft Teams","SharePoint Online","Outlook Web App","OneDrive","Office 365 Portal",
+  "Exchange Online","Azure Portal","Microsoft Graph","Power BI","Intune",
+  "Azure AD Connect","Defender for Endpoint","Defender for Identity","Defender for Office 365",
+  "Defender for Cloud","Planner","Yammer","Forms","Stream","Sway","PowerApps",
+  "Power Automate","Microsoft 365 Admin Center","Microsoft Purview"
+]);
+
+let KnownSafePublishers = dynamic([
+  "Microsoft Corporation","Microsoft Azure","Microsoft Online Services",
+  "Office 365 Exchange Online","Windows Azure Active Directory",
+  "Microsoft Purview","Microsoft Teams","SharePoint Online"
+]);
+
+let SuspiciousUserAgents = dynamic([
+  "python","curl","wget","http-client","go-http","okhttp","java","ruby","perl",
+  "postman","insomnia","rest-client","powershell"
+]);
+
+// High-risk permissions (exact)
+let HighRiskExact = dynamic([
+  "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All","RoleManagement.ReadWrite.Directory",
+  "ServicePrincipal.ReadWrite.All","Directory.ReadWrite.All","Directory.AccessAsUser.All",
+  "Policy.ReadWrite.Authorization","Policy.Read.All","Domain.ReadWrite.All",
+  "AuditLog.Read.All","Reports.Read.All","SecurityEvents.Read.All",
+  "IdentityRiskEvent.Read.All","IdentityRiskyUser.Read.All",
+  "Mail.Read","Mail.ReadWrite","Mail.Send","MailboxSettings.ReadWrite",
+  "EWS.AccessAsUser.All","full_access_as_app",
+  "Files.ReadWrite.All","Sites.ReadWrite.All","Sites.FullControl.All",
+  "ChannelMessage.Read.All","ChannelMessage.ReadWrite.All",
+  "Channel.Read.All","Chat.Read","Chat.ReadWrite",
+  "Calendars.ReadWrite","Contacts.ReadWrite","Notes.ReadWrite.All","Tasks.ReadWrite",
+  "Device.ReadWrite.All","Group.ReadWrite.All","User.ReadWrite.All",
+  "offline_access"
+]);
+
+// High-risk permission families (regex)
+let HighRiskRegex = dynamic([
+  @"^(Application|ServicePrincipal|AppRoleAssignment|RoleManagement|Directory|Domain|Policy)\.(ReadWrite|ReadWrite\.All|AccessAsUser\.All)$",
+  @"^(AuditLog|Reports|Security|IdentityRisk.*|Threat)\.(Read.*|ReadWrite.*)$",
+  @"^(Mail|MailboxSettings)\.(Read.*|Send)$",
+  @"^(Files|Sites)\.(Read.*|Write.*|FullControl\.All)$",
+  @"^(Group|User|Device)\.(ReadWrite.*)$",
+  @"^(Channel.*|Chat)\.(Read.*|Write.*)$",
+  @".*\.FullControl\.All$",
+  @".*\.ReadWrite\.All$"
+]);
+
+// -----------------------------
+// MAIN HUNT
+// -----------------------------
+let Raw =
+AuditLogs
+| where TimeGenerated >= ago(Lookback)
+| where OperationName in (
+    "Consent to application",
+    "Add delegated permission grant",
+    "Add app role assignment grant to service principal",
+    "Add service principal credentials"
+  )
+| where Result =~ "success"
+| extend Target = iff(array_length(TargetResources) > 0, TargetResources[0], dynamic(null))
+| extend AppId          = tostring(Target.id),
+         AppDisplayName = tostring(Target.displayName),
+         ModifiedProps  = tostring(Target.modifiedProperties),
+         InitiatorUPN   = tostring(InitiatedBy.user.userPrincipalName),
+         IPAddress      = tostring(InitiatedBy.user.ipAddress),
+         UserAgent      = tostring(InitiatedBy.user.userAgent),
+         Props          = parse_json(ModifiedProps)
+| mv-expand P = Props
+| extend PropName = tostring(P.displayName),
+         PropValue = tostring(P.newValue);
+
+// -----------------------------
+// Flatten & summarise consent data
+// -----------------------------
+let Summarised =
+Raw
+| summarize
+    IsAppOnlyRaw       = any(iff(PropName=="ConsentContext.IsAppOnly",PropValue,"")),
+    OnBehalfAllRaw     = any(iff(PropName=="ConsentContext.OnBehalfOfAll",PropValue,"")),
+    PublisherNameRaw   = any(iff(PropName=="ConsentContext.PublisherName",PropValue,"")),
+    ResourceNameRaw    = any(iff(PropName=="ConsentContext.ResourceDisplayName",PropValue,"")),
+    DelegatedRaw       = any(iff(PropName=="Scope",PropValue,"")),
+    AppRolesRaw        = any(iff(PropName=="AppRoles",PropValue,"")),
+    CreatedTime        = min(TimeGenerated),
+    Initiator          = any(InitiatorUPN),
+    IPAddress          = any(IPAddress),
+    UserAgent          = any(UserAgent)
+  by AppId, AppDisplayName;
+
+// -----------------------------
+// Normalisation / Parsing
+// -----------------------------
+let Flat =
+Summarised
+| extend
+    IsAppOnly     = tobool(parse_json(IsAppOnlyRaw)),
+    OnBehalfAll   = tobool(parse_json(OnBehalfAllRaw)),
+    PublisherName = trim('"', tostring(PublisherNameRaw)),
+    ResourceName  = trim('"', tostring(ResourceNameRaw)),
+    DelegatedList = split(replace_string(tostring(DelegatedRaw), "\"","")," "),
+    AppRolesJson  = parse_json(AppRolesRaw)
+| mv-expand RoleElt = iif(isnull(AppRolesJson) or array_length(AppRolesJson)==0, dynamic(null), AppRolesJson)
+| extend AppRole = trim(' ', trim('"', tostring(RoleElt)))
+| extend AllPerms = array_concat(DelegatedList, pack_array(AppRole))
+| mv-expand Permission in AllPerms
+| extend Permission = trim(" ", trim("\"", tostring(Permission)))
+| where isnotempty(Permission);
+
+// -----------------------------
+// Permission classification
+// -----------------------------
+let Classified =
+Flat
+| extend
+    IsHighExact = iif(Permission in (HighRiskExact),1,0),
+    IsHighRegex = iif(array_length(array_filter(HighRiskRegex,(re:string){ Permission matches regex re }))>0,1,0),
+    IsHigh = iif(IsHighExact==1 or IsHighRegex==1 or tolower(Permission)=="offline_access",1,0);
+
+// -----------------------------
+// Summarise by application
+// -----------------------------
+let Final =
+Classified
+| summarize
+    HighRiskPermissionCount = sum(IsHigh),
+    HighRiskPerms = make_set_if(Permission, IsHigh==1, 200),
+    Permissions = make_set(Permission, 1000),
+    IsAppOnly = any(IsAppOnly),
+    OnBehalfAll = any(OnBehalfAll),
+    PublisherName = any(PublisherName),
+    ResourceName = any(ResourceName),
+    Initiator = any(Initiator),
+    IPAddress = any(IPAddress),
+    UserAgent = any(UserAgent),
+    IsKnownSafeApp = iff(AppDisplayName in~ (KnownSafeApps),"Yes","No"),
+    IsKnownSafePub = iff(PublisherName in~ (KnownSafePublishers),"Yes","No"),
+    SuspiciousUA   = iff(tolower(UserAgent) has_any (SuspiciousUserAgents),"Yes","No"),
+    CreatedTime = any(CreatedTime)
+  by AppId, AppDisplayName;
+
+// -----------------------------
+// CTI / MISP Confidence Integration
+// -----------------------------
+let WithTI =
+Final
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, ThreatType, TlpLevel, Tags
+) on $left.AppId == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence, 40)),
+         DetectionSignal =
+            (HighRiskPermissionCount*15) +
+            (iif(OnBehalfAll,20,0)) +
+            (iif(IsAppOnly,10,0)) +
+            (iif(SuspiciousUA=="Yes",15,0)),
+         KillChainRelevance = 85,
+         TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.40 + IntelConfidence*0.30 + KillChainRelevance*0.20 + TemporalScore*0.10)),
+         FinalRisk = case(
+            FinalScore>=90,"CRITICAL",
+            FinalScore>=70,"HIGH",
+            "MEDIUM"
+         ),
+         MITRE_Tactics="TA0001 Initial Access; TA0003 Persistence; TA0004 Privilege Escalation; TA0006 Credential Access",
+         MITRE_Techniques=strcat_array(pack_array(
+            "T1528 Abuse of OAuth Tokens",
+            "T1098 Account Manipulation",
+            "T1136 Create Account",
+            iif(IsAppOnly,"T1550.001 App Impersonation",""),
+            iif(HighRiskPermissionCount>0,"T1068 Permission Abuse","")
+         ),"; ");
+
+WithTI
+| extend HuntingDirectives = pack_array(
+    strcat("1) Review legitimacy of '",AppDisplayName,"' (",AppId,") consent."),
+    strcat("2) ConsentType=", iff(OnBehalfAll,"Admin (tenant-wide)","User")),
+    strcat("3) GrantType=", iff(IsAppOnly,"Application (client credentials)","Delegated user")),
+    strcat("4) High-risk permissions: ", array_join(HighRiskPerms,", ")),
+    strcat("5) Initiator=", Initiator, " | IP=", IPAddress, " | UA=", UserAgent),
+    strcat("6) Publisher=", PublisherName, " | Resource=", ResourceName),
+    strcat("7) TI Score=", tostring(IntelConfidence), " | Risk=", FinalRisk),
+    strcat("8) Azure Portal:", " https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/",AppId),
+    "9) If CRITICAL: revoke OAuth2PermissionGrant & rotate creds immediately.",
+    "10) Hunt SignInLogs for this AppId for anomalous locations, UAs, and app-token usage."
+)
+| project CreatedTime, AppDisplayName, AppId, PublisherName, ResourceName,
+          IsAppOnly, OnBehalfAll, HighRiskPermissionCount, HighRiskPerms,
+          Permissions, Initiator, IPAddress, UserAgent,
+          IsKnownSafeApp, IsKnownSafePub, SuspiciousUA,
+          IntelConfidence, FinalScore, FinalRisk,
+          MITRE_Tactics, MITRE_Techniques, HuntingDirectives
+| order by FinalScore desc
