@@ -323,6 +323,7 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Network IOC match | ✔ | TI IP/domain |
 | MISP hash match | ✔ | TIFile |
 
+# 4.1 Complete Combined Rule Summary — What Each Rule Detects
 
 | Attack      | DLL Drift | Registry | SMB | OAuth | C2/Ports | BYOVD | Coverage |
 | ----------- | --------- | -------- | --- | ----- | -------- | ----- | -------- |
