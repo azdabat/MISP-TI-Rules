@@ -1,0 +1,42 @@
+// OAuth Consent Abuse Detection (Cloud token & app consent)
+// Incomplete Attack Chain
+// Author: Ala Dabat
+let KnownSafeApps = dynamic(["Microsoft Office 365 Portal","Microsoft Teams","SharePoint Online","OneDrive","Outlook Web App","Microsoft Intune"]);
+
+AuditLogs
+| where TimeGenerated >= ago(7d)
+| where OperationName == "Consent to application" and Result == "success"
+| extend Target = TargetResources[0]
+| extend AppId = tostring(Target.id), AppDisplayName = tostring(Target.displayName), ModifiedProps = Target.modifiedProperties,
+         Initiator = tostring(InitiatedBy.user.userPrincipalName), IPAddress = tostring(InitiatedBy.user.ipAddress), UserAgent = tostring(InitiatedBy.user.userAgent)
+| mv-expand Prop = ModifiedProps
+| extend PropName = tostring(Prop.displayName), PropValue = tostring(Prop.newValue)
+| summarize
+    IsAppOnly = any(iff(PropName == "ConsentContext.IsAppOnly", PropValue, "")),
+    OnBehalfOfAll = any(iff(PropName == "ConsentContext.OnBehalfOfAll", PropValue, "")),
+    PublisherInfo = any(iff(PropName == "TargetId.ServicePrincipalNames", PropValue, "")),
+    TimeGenerated = any(TimeGenerated), UserAgent = any(UserAgent), IPAddress = any(IPAddress), Initiator = any(Initiator)
+  by AppId, AppDisplayName
+| where AppDisplayName !in~ (KnownSafeApps)
+| extend RiskScore = case(
+    IsAppOnly == "\"True\"" and OnBehalfOfAll == "\"True\"",10,
+    IsAppOnly == "\"True\"", 7,
+    OnBehalfOfAll == "\"True\"", 5, 2
+  )
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("URL","EmailAddress","FileHash")
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel, ThreatType
+) on $left.AppDisplayName == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence,50)),
+         DetectionSignal = toint(RiskScore * 8),
+         KillChainRelevance = 75, TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1)),
+         FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM"),
+         ThreatHunterDirective = case(
+           FinalRisk=="CRITICAL", strcat("IMMEDIATE: Revoke app consent; reset user creds; review audit trail; add sighting. AppId=", AppId),
+           FinalRisk=="HIGH", strcat("URGENT: Validate publisher & scopes; check devices used by ", Initiator, "; monitor token usage."),
+           "INVESTIGATE: Verify approval chain; limit scopes; add to watchlist."
+         )
+| project TimeGenerated, AppDisplayName, AppId, RiskScore, IntelConfidence, FinalScore, FinalRisk, Initiator, IPAddress, UserAgent, PublisherInfo, ThreatHunterDirective
+| order by FinalScore desc, TimeGenerated desc
