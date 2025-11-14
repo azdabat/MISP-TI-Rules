@@ -339,7 +339,7 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Network IOC match | ✔ | TI IP/domain |
 | MISP hash match | ✔ | TIFile |
 
-```
+---
 # 4.1 Complete Combined Rule Summary — What Each Rule Detects
 
 | Attack      | DLL Drift | Registry | SMB | OAuth | C2/Ports | BYOVD | Coverage |
@@ -369,7 +369,9 @@ Detects:
 - Post-load driver behaviour  
 - Memory protection tampering  
 - AMSI bypassing  
-- LSASS read via driver  
+- LSASS read via driver
+
+---
 
 ### 5.4 Cloud API Exfiltration Detection  
 For:
@@ -387,9 +389,7 @@ Would detect:
 ### 5.6 LSASS Memory Access Rule  
 Full coverage for:
 - Credential harvesting (NotPetya, F5, SolarWinds stage-2)
-
 ---
-
 # 6. Future Research — N-Day & Zero-Day Modelling Using Honeypot TI
 
 Modern attackers evolve faster than static IOCs.  
@@ -421,8 +421,7 @@ Focusing on invariants:
 - identity-token forging chains  
 
 This will be a **future project** expanding your detection engineering portfolio with **AI-assisted TI correlation, honeypot telemetry ingestion, and early-signal behavioural analytics.**
----
-
+```
 # 5. Key Takeaways
 
 - **MISP converts behaviours into intelligence-driven detections.**  
@@ -431,7 +430,7 @@ This will be a **future project** expanding your detection engineering portfolio
 - **Driver drift** exposes kernel-level compromises.  
 - **Multi-signal fusion** (DLL + driver + registry + DNS + TI) is essential for modern 2025 threats.
 
----
+```
 
 # 5.1 📁 Repository Navigation — Direct Links to All Hunts
 
