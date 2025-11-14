@@ -1,0 +1,321 @@
+// ======================================================
+//  L3_HUNT_BYOVD_2025_TI_Integrated (Sentinel + MDE + MISP)
+//  MITRE: TA0004, TA0005, TA0003 | T1068, T1547.012, T1562.001, T1003.001
+//  Author: Ala Dabat | Version: 2025-11
+//  Purpose:
+//    • Same core BYOVD logic as MDE-only version
+//    • PLUS ThreatIntelligenceIndicator correlation for driver hashes & C2 infra
+// ======================================================
+
+let timeframe      = 14d;
+let MISP_Lookback  = 30d;
+
+// ---------------- MISP DRIVER CSV (as in MDE rule) ----------------
+let MISP_Driver_IOCs = externaldata(
+    value:string,
+    type:string,
+    category:string,
+    tags:string,
+    first_seen:datetime,
+    last_seen:datetime,
+    confidence:int,
+    orgc:string
+)
+[
+  "https://misp.instance.com/events/restsearch/download/format:csv/tags:byovd||driver_malicious||driver_vulnerable"
+]
+with (format="csv", ignoreFirstRecord=true, ignoreEmpty=true)
+| where confidence >= 70
+| where type in ("sha256","filename","windows-service-name","impashash")
+| extend
+    MISP_Confidence = confidence,
+    MISP_Org        = orgc,
+    MISP_FirstSeen  = first_seen,
+    MISP_Tags       = tags;
+
+// ---------------- DRIVER LOAD / UNLOAD (MDE tables in Sentinel) ----------------
+let DriverLoadEvents = materialize(
+    DeviceEvents
+    | where TimeGenerated > ago(timeframe)
+    | where ActionType in ("DriverLoaded","DriverLoad")
+    | extend
+        DriverName   = tostring(FileName),
+        DriverPath   = tostring(FolderPath),
+        DriverSHA256 = tolower(tostring(SHA256)),
+        LoadTime     = TimeGenerated,
+        LoaderProc   = tostring(InitiatingProcessFileName),
+        LoaderCmd    = tostring(InitiatingProcessCommandLine)
+    | project
+        EventTime = LoadTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        LoaderProc, LoaderCmd
+);
+
+let DriverUnloadEvents = materialize(
+    DeviceEvents
+    | where TimeGenerated > ago(timeframe)
+    | where ActionType in ("DriverUnloaded","DriverUnload")
+    | extend
+        DriverName   = tostring(FileName),
+        DriverSHA256 = tolower(tostring(SHA256)),
+        UnloadTime   = TimeGenerated
+    | project
+        DeviceId, DriverName, DriverSHA256, UnloadTime
+);
+
+// ---------------- DORMANT & INSTANT DRIVERS (same as MDE rule) ----------------
+let DormantDrivers =
+    DriverLoadEvents
+    | join kind=leftanti (DriverUnloadEvents) on DeviceId, DriverSHA256
+    | where EventTime < ago(24h)
+    | extend DormantHours = datetime_diff("hour", EventTime, now())
+    | where DormantHours >= 24
+    | project
+        EventTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        DetectionSource = "Dormant_Driver",
+        DetectionWeight = 3,
+        BaseConfidence  = 80,
+        Evidence        = strcat("Dormant driver loaded for ", tostring(DormantHours), "h without unload");
+
+let InstantLoadPatterns =
+    DriverLoadEvents
+    | join kind=inner (DriverUnloadEvents) on DeviceId, DriverSHA256
+    | extend LoadDurationSeconds = datetime_diff("second", EventTime, UnloadTime)
+    | where LoadDurationSeconds between (1 .. 300)
+    | extend BinBucket = bin(LoadDurationSeconds, 30),
+             Pattern   = strcat("Instant_Load_", tostring(BinBucket), "s")
+    | project
+        EventTime = UnloadTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        DetectionSource = "Instant_Load_Unload",
+        DetectionWeight = 3,
+        BaseConfidence  = 85,
+        Evidence        = strcat("Driver loaded & unloaded in ~", tostring(LoadDurationSeconds), "s (", Pattern, ")");
+
+// ---------------- SUSPICIOUS LOADER, IOCTL, LSASS, TAMPER (same idea) ----------------
+let SuspiciousParents = dynamic([
+  "powershell.exe","cmd.exe","mshta.exe","rundll32.exe",
+  "wscript.exe","cscript.exe","msbuild.exe","installutil.exe"
+]);
+
+let AnomalousLoaderPatterns =
+    DriverLoadEvents
+    | where LoaderProc in~ (SuspiciousParents)
+      or LoaderCmd has_any ("-ep bypass"," -enc ","EncodedCommand","FromBase64String","Invoke-")
+    | project
+        EventTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        DetectionSource = "Suspicious_Loader",
+        DetectionWeight = 2,
+        BaseConfidence  = 80,
+        Evidence        = strcat("Loader=", LoaderProc, " Cmd=", LoaderCmd);
+
+let SuspiciousIOCTLEvents =
+    DeviceEvents
+    | where TimeGenerated > ago(timeframe)
+    | where ActionType == "IoControlCode"
+    | extend
+        DriverName = tostring(ExtendedProperties.DriverName),
+        IOCTL_Code = tostring(ExtendedProperties.ControlCode),
+        Operation  = tostring(ExtendedProperties.Operation)
+    | where IOCTL_Code has_any ("0x222000","0x220008","0x22000C","0x80002000","0x80002010","0x80002018")
+      and Operation in ("MemoryRead","MemoryWrite","ProcessAccess","DriverUnload")
+    | summarize
+        IOCTL_Count = count(),
+        First_IOCTL = min(TimeGenerated),
+        Last_IOCTL  = max(TimeGenerated),
+        Operations  = make_set(Operation)
+      by DeviceId, DeviceName, DriverName, IOCTL_Code
+    | project
+        EventTime = Last_IOCTL,
+        DeviceId, DeviceName,
+        DriverName, DriverPath = "", DriverSHA256 = "",
+        DetectionSource = "Malicious_IOCTL",
+        DetectionWeight = 4,
+        BaseConfidence  = 90,
+        Evidence        = strcat("IOCTL=", IOCTL_Code, " Ops=", array_strcat(Operations,", "),
+                                 " Count=", tostring(IOCTL_Count));
+
+let LSASS_AccessEvents =
+    DeviceEvents
+    | where TimeGenerated > ago(timeframe)
+    | where ActionType in ("ProcessAccessed","ProcessInjected","SuspiciousProcessAccessed")
+    | extend
+        TargetProcess = tostring(AdditionalFields.TargetProcessName),
+        SourceProcess = tostring(InitiatingProcessFileName)
+    | where TargetProcess =~ "lsass.exe"
+    | project
+        EventTime = TimeGenerated,
+        DeviceId, DeviceName,
+        DriverName = "", DriverPath = "", DriverSHA256 = "",
+        DetectionSource = "LSASS_Access",
+        DetectionWeight = 4,
+        BaseConfidence  = 90,
+        Evidence        = strcat("Process ", SourceProcess, " accessed LSASS");
+
+let TamperEvents =
+    DeviceEvents
+    | where TimeGenerated > ago(timeframe)
+    | where ActionType in (
+        "TamperProtectionDisabled",
+        "ExploitGuardPolicyChanged",
+        "SecurityProductTampering",
+        "EDRUninstallationAttempted",
+        "DefenderDisabled"
+    )
+    | project
+        EventTime = TimeGenerated,
+        DeviceId, DeviceName,
+        DriverName = "", DriverPath = "", DriverSHA256 = "",
+        DetectionSource = "EDR_Tamper",
+        DetectionWeight = 3,
+        BaseConfidence  = 85,
+        Evidence        = strcat("EDR/AMSI tamper event: ", ActionType);
+
+// ---------------- MISP DRIVER IOC MATCH ----------------
+let MISP_Matches_Hash =
+    DriverLoadEvents
+    | join kind=inner (
+        MISP_Driver_IOCs
+        | where type == "sha256"
+        | extend IocValue = tolower(value)
+    ) on $left.DriverSHA256 == $right.IocValue
+    | project
+        EventTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        DetectionSource = "MISP_Driver_Hash",
+        DetectionWeight = 5,
+        BaseConfidence  = MISP_Confidence,
+        Evidence        = strcat("MISP hash match (", MISP_Org, " / ", tostring(MISP_Confidence), ") tags=", MISP_Tags);
+
+let MISP_Matches_Name =
+    DriverLoadEvents
+    | join kind=inner (
+        MISP_Driver_IOCs
+        | where type in ("filename","windows-service-name")
+        | extend IocValue = tolower(value)
+    ) on $left.DriverName == $right.IocValue
+    | project
+        EventTime,
+        DeviceId, DeviceName,
+        DriverName, DriverPath, DriverSHA256,
+        DetectionSource = "MISP_Driver_Name",
+        DetectionWeight = 4,
+        BaseConfidence  = MISP_Confidence,
+        Evidence        = strcat("MISP name/service match (", MISP_Org, " / ", tostring(MISP_Confidence), ") tags=", MISP_Tags);
+
+// ---------------- ThreatIntelligenceIndicator for Driver Hash & C2 ----------------
+let TIDriver =
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("filehash","FileHash")
+    | project DriverSHA256 = tolower(Indicator), TI_DriverConfidence = ConfidenceScore,
+              TI_DriverThreatType = ThreatType, TI_TLP = TlpLevel;
+
+let TIC2 =
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("IP","IPv4","DomainName","URL")
+    | project TI_Indicator = Indicator, TI_C2Confidence = ConfidenceScore,
+              TI_C2ThreatType = ThreatType, TI_TLP = TlpLevel;
+
+// ---------------- OPTIONAL C2 NETWORK CONTEXT (driver host talking out) ----------------
+let NetCtx =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(timeframe)
+    | project
+        EventTime = TimeGenerated,
+        DeviceId, DeviceName,
+        RemoteIP, RemoteUrl, InitiatingProcessFileName;
+
+// ---------------- UNIFIED CORRELATION + TI SCORING ----------------
+let CoreSignals =
+union
+    DormantDrivers,
+    InstantLoadPatterns,
+    AnomalousLoaderPatterns,
+    SuspiciousIOCTLEvents,
+    LSASS_AccessEvents,
+    TamperEvents,
+    MISP_Matches_Hash,
+    MISP_Matches_Name;
+
+CoreSignals
+| summarize
+    SignalCount      = count(),
+    TotalWeight      = sum(DetectionWeight),
+    MaxBaseConfidence= max(BaseConfidence),
+    Sources          = make_set(DetectionSource),
+    Evidences        = make_set(Evidence),
+    FirstSeen        = min(EventTime),
+    LastSeen         = max(EventTime)
+  by DeviceId, DeviceName, DriverName, DriverPath, DriverSHA256
+// Join TI for driver hash
+| join kind=leftouter TIDriver on DriverSHA256
+| extend
+    TI_Conf_Driver = toint(coalesce(TI_DriverConfidence, 0))
+// Optionally, pull some C2 TI per device for context (lightweight)
+| join kind=leftouter (
+    NetCtx
+    | join kind=leftouter TIC2 on $left.RemoteIP == $right.TI_Indicator or $left.RemoteUrl == $right.TI_Indicator
+) on DeviceId
+| summarize
+    SignalCount      = max(SignalCount),
+    TotalWeight      = max(TotalWeight),
+    MaxBaseConfidence= max(MaxBaseConfidence),
+    Sources          = any(Sources),
+    Evidences        = any(Evidences),
+    FirstSeen        = min(FirstSeen),
+    LastSeen         = max(LastSeen),
+    TI_Conf_Driver   = max(TI_Conf_Driver),
+    TI_Conf_C2       = max(toint(coalesce(TI_C2Confidence, 0)))
+  by DeviceId, DeviceName, DriverName, DriverPath, DriverSHA256
+| extend
+    DetectionSignal = iff(TotalWeight > 10, 10.0, todouble(TotalWeight)),
+    IntelConfidence = todouble(
+        case(
+            TI_Conf_Driver > 0 or TI_Conf_C2 > 0, max(TI_Conf_Driver, TI_Conf_C2),
+            MaxBaseConfidence > 0, MaxBaseConfidence,
+            50.0
+        )
+    ),
+    KillChainRelevance = iff(array_length(Sources) >= 3, 90.0, 75.0),
+    TemporalScore      = iff(LastSeen >= ago(24h), 100.0, 70.0)
+| extend
+    FinalScore = round(
+        (DetectionSignal * 0.40) +
+        (IntelConfidence * 0.30) +
+        (KillChainRelevance * 0.20) +
+        (TemporalScore * 0.10), 1),
+    FinalRisk = case(
+        FinalScore >= 90, "CRITICAL",
+        FinalScore >= 75, "HIGH",
+        FinalScore >= 60, "MEDIUM",
+        "LOW"
+    )
+| extend
+    MITRE_Tactic      = "TA0004 Privilege Escalation; TA0005 Defense Evasion; TA0003 Persistence",
+    MITRE_Techniques  = "T1068 Exploitation for Privilege Escalation; T1547.012 BYOVD; T1562.001 Disable/Modify Tools; T1003.001 LSASS Dumping",
+    HunterDirective = strcat(
+        "BYOVD TI Hunt — Device=", DeviceName,
+        " | Driver=", coalesce(DriverName,"<unknown>"),
+        " | Sources=", array_strcat(Sources, ", "),
+        " | FinalScore=", tostring(FinalScore), " (", FinalRisk, "). ",
+        "Actions: ",
+        "1) Isolate host + capture memory (focus on kernel objects & LSASS). ",
+        "2) Retrieve driver binary from ", coalesce(DriverPath,"<unknown>"),
+        " (", coalesce(DriverSHA256,"no-hash"), ") and compare with vendor baseline. ",
+        "3) Check TI for this hash / any related C2 infra; push sighting to MISP/OpenCTI. ",
+        "4) Review IOCTL / LSASS / EDR tamper timeline to determine exploit vs benign vuln. ",
+        "5) If malicious: add to WDAC/HVCI/EDR blocklists; open IR case; coordinate with vendor if vulnerable."
+    )
+| project
+    FirstSeen, LastSeen, DeviceName, DriverName, DriverPath, DriverSHA256,
+    SignalCount, TotalWeight, Sources, evidences = Evidences,
+    DetectionSignal, IntelConfidence, KillChainRelevance, TemporalScore,
+    FinalScore, FinalRisk, MITRE_Tactic, MITRE_Techniques, HunterDirective
+| order by FinalScore desc, LastSeen desc
