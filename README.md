@@ -70,7 +70,16 @@ Even with only **6 core hunts**, uplift was significant:
 
 - **+35% to +65% improvement** across evaluated attacks  
 - Detection of **signed malware**, **delayed implants**, **driver tampering**, **OAuth pivots**  
-- Full **kill-chain scoring**, **TI confidence weighting**, and **multi-signal fusion**  
+- Full **kill-chain scoring**, **TI confidence weighting**, and **multi-signal fusion**
+
+The detection coverage shown below is based on only a small subset of rules (native baseline rules vs a single advanced supply-chain drift rule). In a full production environment, running a broader rule set including behavioural, identity, cloud, kernel-level, and TI-enriched detections would significantly improve fidelity.
+
+These results are therefore intended as a rough, high-level representation to illustrate how CTI-integrated confidence scoring, baseline drift detection, and multi-signal correlation can dramatically enhance visibility across complex supply-chain attack chains.
+
+The detections in this assessment were driven by a small but strategically chosen set of high-fidelity rules, each focused on a critical stage of modern supply-chain and identity-centric attack chains. These rules combine registry-based persistence detection, SMB lateral-movement correlation, OAuth consent abuse analysis, rogue endpoint discovery, signed-binary and driver drift analysis, BYOVD, and TI-enriched C2/port matching.
+
+Although only a handful of rules were tested, the combination of multi-signal correlation and MISP-powered confidence scoring significantly amplifies detection fidelity across all evaluated attacks.
+In a full production deployment with 30–50 complementary rules, overall detection strength would increase further; however, this prototype is designed to demonstrate how CTI-integrated scoring and baseline-drift detection meaningfully improve supply-chain attack visibility.
 
 ---
 
