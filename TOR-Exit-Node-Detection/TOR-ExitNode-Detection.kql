@@ -1,0 +1,75 @@
+// =====================================================================
+// TOR Exit Node Communication — MISP-Enriched Threat Hunt
+// Author: Ala Dabat
+// Purpose: Identify outbound/inbound TOR communications, enriched with CTI.
+// MITRE: TA0011 Command & Control, TA0010 Exfiltration, T1090 Proxy
+// =====================================================================
+
+// --------------------------
+// 1) TOR Exit Node List (External CTI)
+// --------------------------
+let TorExitNodes =
+    externaldata(dest_ip:string)
+    ["https://raw.githubusercontent.com/mthcht/awesome-lists/main/Lists/TOR/only_tor_exit_nodes_IP_list.csv"]
+    with (format="csv", ignoreFirstRecord=true);
+
+// Convert into fast lookup set
+let TorIPs = TorExitNodes | distinct dest_ip;
+
+// --------------------------
+// 2) MISP / TI Enrichment
+// --------------------------
+let MISP =
+    ThreatIntelligenceIndicator
+    | where IndicatorType in ("IP","DomainName","URL")
+    | project TI_Indicator = Indicator,
+              TI_Confidence = ConfidenceScore,
+              TI_ThreatType = ThreatType,
+              TI_TLP = TlpLevel,
+              TI_Tags = Tags;
+
+// --------------------------
+// 3) Main Network Hunt
+// --------------------------
+DeviceNetworkEvents
+| where RemoteIP in (TorIPs)
+| join kind=leftouter (MISP)
+    on $left.RemoteIP == $right.TI_Indicator
+| extend
+    Direction = iif(ConnectionDirection == "Outbound", "Outbound to Tor", "Inbound from Tor"),
+    VT_Link = strcat("https://www.virustotal.com/gui/ip-address/", RemoteIP),
+    TI_Hit = iif(isnotempty(TI_Indicator), "Yes", "No")
+| summarize
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp),
+    Count = count(),
+    Processes = make_set(InitiatingProcessFileName, 10),
+    Cmds = make_set(InitiatingProcessCommandLine, 10),
+    Accounts = make_set(InitiatingProcessAccountName, 10),
+    Ports = make_set(RemotePort, 10),
+    TI_Hit = max(TI_Hit),
+    TI_Confidence = max(TI_Confidence),
+    TI_ThreatType = any(TI_ThreatType)
+  by DeviceName, RemoteIP, Direction
+| extend
+    RiskLevel = case(
+        TI_Hit == "Yes" and TI_Confidence >= 80, "CRITICAL",
+        TI_Hit == "Yes", "HIGH",
+        Direction == "Outbound to Tor", "MEDIUM",
+        "LOW"
+    ),
+    MITRE_Tactics = "TA0011 C2; TA0010 Exfiltration; TA0007 Discovery",
+    MITRE_Techniques = "T1090 Proxy; T1071 App Layer Protocol; T1573 Encrypted Channel"
+| extend HuntingDirectives = pack_array(
+    strcat("1. TOR communication detected (", Direction, ")."),
+    strcat("2. Process list: ", array_join(Processes, ", ")),
+    strcat("3. Command lines: ", array_join(Cmds, " | ")),
+    strcat("4. Accounts involved: ", array_join(Accounts, ", ")),
+    strcat("5. Ports contacted: ", array_join(Ports, ", ")),
+    strcat("6. Threat Intel Hit: ", TI_Hit, " | Threat Type: ", coalesce(TI_ThreatType, "None")),
+    strcat("7. TI Confidence: ", tostring(TI_Confidence)),
+    strcat("8. VT Reputation Lookup: ", VT_Link),
+    "9. Check for C2 behaviour, credential misuse, exfiltration patterns.",
+    "10. Investigate parent process tree and recent logon sessions."
+)
+| order by RiskLevel desc, Count desc, FirstSeen asc
