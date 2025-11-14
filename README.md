@@ -338,21 +338,9 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Network IOC match | ✔ | TI IP/domain |
 | MISP hash match | ✔ | TIFile |
 
-## 4.3 Percentage Improvements
 
 ```
-Attack          Native   CTI    Improvement
---------------------------------------------------------
-SolarWinds       40%     75%     +35%   ██████████████
-NotPetya         60%     85%     +25%   ████████
-3CX              35%     90%     +55%   █████████████████████
-NTT Data         40%     90%     +50%   ████████████████████
-F5 Attack        15%     80%     +65%   █████████████████████████
-```
-
----
-
-# 4.4 Complete Combined Rule Summary — What Each Rule Detects
+# 4.1 Complete Combined Rule Summary — What Each Rule Detects
 
 | Attack      | DLL Drift | Registry | SMB | OAuth | C2/Ports | BYOVD | Coverage |
 | ----------- | --------- | -------- | --- | ----- | -------- | ----- | -------- |
