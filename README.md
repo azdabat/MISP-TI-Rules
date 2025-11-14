@@ -22,7 +22,7 @@
   - [B. CTI-Integrated Detection Strength](#b-cti-integrated-detection-strength)
   - [C. Percentage Improvement (Native-→-CTI)](#c-percentage-improvement-native--cti)
 - [4. Combined Rule Suite Summary — What Each Rule Detects](#4-combined-rule-suite--what-each-rule-detects)
-  - [4.4 Complete Combined Rule Summary Table](#44-complete-combined-rule-summary--what-each-rule-detects)
+  - [4.1 Complete Combined Rule Summary Table](#44-complete-combined-rule-summary--what-each-rule-detects)
 - [5. Additional Rules That Would Improve Fidelity Further](#5-additional-rules-that-would-improve-fidelity-further)
   - [Golden SAML](#51-golden-saml-detection)
   - [MS17-010 Exploit Hunt](#52-ms17-010--exploit-telemetry-hunt)
