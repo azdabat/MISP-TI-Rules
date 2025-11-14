@@ -73,7 +73,86 @@ This is a **full-chain supply-chain detector**, not a simple DLL load check.
 
 ---
 
+# 🔍 Supply-Chain Attack Detection Matrix  
+### Using: L3 DLL / Signed Binary Drift + Driver + Registry + TI Correlation Rule
+
+| Attack / Technique Area | DLL Load Detection | Fast Load | Dormant Loader | Version / Signer Drift | Rare DLL | Registry Persistence | Driver Activity | C2 / Network TI | Hash TI Match | Overall Coverage |
+|-------------------------|-------------------|-----------|----------------|-------------------------|----------|----------------------|-----------------|------------------|----------------|------------------|
+| **3CX Supply-Chain (2023)** | 🟩 | 🟩 | 🟨 (short delay) | 🟨 | 🟩 | 🟨 | ❌ | 🟩 | 🟩 | **High** |
+| **SolarWinds SUNBURST (2020)** | 🟩 | ❌ (no fast load) | 🟩🟩🟩 (weeks-long dormancy) | 🟩🟩 | 🟩 | 🟨 | ❌ | 🟩 | 🟩 | **Very High** |
+| **F5 BIG-IP Backdoor/Persistence (2024/25)** | 🟩 | 🟨 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | **Very High** |
+| **M.E.Doc / NotPetya (2017)** | 🟩 | 🟨 | 🟨 | 🟩 | 🟩 | 🟩 | ❌ | 🟩 | 🟨 | **High** |
+| **CCleaner Backdoor (2017)** | 🟩 | 🟩 | 🟨 | 🟩 | 🟩 | ❌ | ❌ | 🟩 | 🟩 | **High** |
+| **Kaseya VSA / REvil (2021)** | 🟩 | 🟩 | 🟨 | 🟨 | 🟨 | 🟩 | ❌ | 🟩 | 🟨 | **Medium-High** |
+| **XZ Backdoor (2024)** | 🟨 | ❌ | ❌ | 🟩 | 🟨 | ❌ | ❌ | 🟨 | 🟩 (if Windows port) | **Medium** |
+| **Ivanti / VPN Appliance Chains (2024/25)** | 🟨 (if DLL dropped) | ❌ | ❌ | 🟨 | ❌ | ❌ | ❌ | 🟩 | 🟩 | **Low-Medium** |
+| **3CX Stage-2 (Icon/SVG steganography)** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 🟨 | ❌ | **Minimal** |
+| **Memory-Only Implants (various)** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | **None** |
+
+🟩 Strong Detection 🟨 Partial Detection ❌ Not Detected  
+
 ## ⚙️ Behaviour & Scoring Logic
 
 ### **BehaviorScore (40%)**
+
+3 × FastLoad
+1 × DormantShort
+2 × DormantLong
+3 × DormantVeryLong
+3 × IsUnsigned
+2 × IsRare
+2 × LoaderIsVendor
+3 × VersionDrift
+3 × SignerDrift
+3 × HashDrift
+−1 × TrustedSigner
+
+
+### **KillChainScore (20%)**
+- +1 if driver loaded  
+- +1 if registry DLL reference  
+
+### **RecencyScore (10%)**
+- +10 if DLL load occurred in last 24h  
+
+### **TI_Confidence (30%)**
+- Max(file IOC, network IOC) confidence
+
+### **Final Formula**
+
+
+---
+
+## 🧭 Hunter Directives (Embedded in Output)
+
+Each output row includes these steps (auto-generated):
+
+1. Identify loader process + signer  
+2. Confirm version/signer/hash drift  
+3. Inspect Create→Load timing (fast vs dormant)  
+4. Review registry persistence references  
+5. Check driver activity around same timestamp  
+6. Inspect C2 traffic (RemoteIP/Domain/URL)  
+7. Review TI match and threat type  
+8. **If ALERT:** isolate host & collect binary samples  
+9. **If HUNT:** pivot on version/signer drift across org  
+
+---
+
+
+---
+
+## 📝 Notes
+
+- Designed as an **L3 hunt rule**, not a high-volume analytics rule  
+- Excellent for audits, IR investigations, supply-chain compromise checks  
+- Works best when combined with TI feeds (MISP/OpenCTI)  
+- Detects: fast loaders, delayed loaders, long-dormant loaders, registry + driver persistence, integrity drift, C2 beacons  
+
+This is a **high-fidelity**, **low-false-positive**, **full-chain** supply-chain compromise detector.
+
+---
+
+
+
 
