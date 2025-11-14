@@ -326,7 +326,75 @@ F5 Attack        15%     80%     +65%   █████████████�
 - **Delayed activation logic** catches staged implants weeks later.  
 - **Kernel driver correlation** exposes UNC5221-style attacks.  
 - **OAuth abuse detection** closes identity-layer blindspots.  
-- **Multi-signal fusion** (registry + driver + DLL + DNS + TI) is essential for 2025 threats.  
+- **Multi-signal fusion** (registry + driver + DLL + DNS + TI) is essential for 2025 threats.
+
+  ## 📁 Repository Navigation — Direct Links to All Hunts
+
+Below are the direct links to each analytic rule in this repository, organised by folder.
+
+---
+
+### 🔥 Supply-Chain & Binary Drift Detection
+| Rule | Description | Link |
+|------|-------------|------|
+| **Supply-Chain DLL Hunt** | Full DLL sideloading + drift detection (version, signer, hash, timing) | https://github.com/azdabat/MISP-TI-Rules/tree/main/Supply-Chain%20DLL%20Hunt |
+
+---
+
+### ⚙️ BYOVD / Malicious Driver Detection
+| Rule | Description | Link |
+|------|-------------|------|
+| **BYOVD_Malicious_Driver_Detection** | Detects malicious or vulnerable kernel drivers (signed/unsigned abuse) | https://github.com/azdabat/MISP-TI-Rules/tree/main/BYOVD-Malicious_Driver_Detection/BYOVD_Detection_Rule_TI_MISP.kql |
+
+---
+
+### 🔐 OAuth Consent Abuse / Cloud Identity Threat Hunting
+| Rule | Description | Link |
+|------|-------------|------|
+| **OAuth_Consent Abuse (TI + MISP Confidence)** | Detects malicious OAuth apps, token abuse, risky scopes & impersonation | https://github.com/azdabat/MISP-TI-Rules/tree/main/OAuth_Consent_TTI_MISP_Confidence/0Auth_consent_threat_hunt_ti.kql |
+
+---
+
+### 🧬 Registry Persistence (MISP Adaptive Detection)
+| Rule | Description | Link |
+|------|-------------|------|
+| **Registry Persistence Detection (MISP-Enriched Adaptive)** | Autoruns, COM hijack, IFEO, LSA injection, encoded payload detection | https://github.com/azdabat/MISP-TI-Rules/tree/main/Registry%20Persistence%20MISP%20Detection/Registry%20Persistence%20Detection-MISP-Enriched-Adaptive.kql |
+
+---
+
+### 🧱 NotPetya / PsExec / SMB Lateral Movement
+| Rule | Description | Link |
+|------|-------------|------|
+| **SMB Lateral Movement — Enhanced** | Detects ADMIN$, PsExec, WMI worming, service execution, DNS pivots | https://github.com/azdabat/MISP-TI-Rules/tree/main/SMB-Later-Movement/SMB%20Lateral%20Movement%20%E2%80%94%20Enhanced.kql |
+
+---
+
+### 🌍 TOR Exit Node Detection
+| Rule | Description | Link |
+|------|-------------|------|
+| **TOR Exit Node Threat Hunt** | Detects logins / network traffic originating from TOR exit relays | https://github.com/azdabat/MISP-TI-Rules/tree/main/TOR-Exit-Node-Detection/TOR-ExitNode-Detection.kql |
+
+---
+
+## 🔎 Additional Useful Directories
+
+| Folder | Purpose | Link |
+|--------|----------|------|
+| **Repo Root** | See all hunts and supporting files | https://github.com/azdabat/MISP-TI-Rules/tree/main |
+| **All KQL Rules** | Index of every KQL file in this repo | https://github.com/azdabat/MISP-TI-Rules/tree/main |
+
+---
+
+### 💡 Tip for Reviewers
+Each rule includes:
+- MITRE ATT&CK tactics & techniques  
+- Inline **Hunter Directives**  
+- MISP & OpenCTI enrichment  
+- Confidence scoring  
+- Low-noise triage-ready output
+
+This is a **complete detection engineering showcase**, demonstrating how TI-integrated analytics dramatically improve supply-chain, identity, kernel-level and C2 threat visibility.
+
 
 ---
 
