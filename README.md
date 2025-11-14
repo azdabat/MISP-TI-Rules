@@ -323,7 +323,21 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Network IOC match | ✔ | TI IP/domain |
 | MISP hash match | ✔ | TIFile |
 
-# 4.1 Complete Combined Rule Summary — What Each Rule Detects
+## 4.3 Percentage Improvements
+
+```
+Attack          Native   CTI    Improvement
+--------------------------------------------------------
+SolarWinds       40%     75%     +35%   ██████████████
+NotPetya         60%     85%     +25%   ████████
+3CX              35%     90%     +55%   █████████████████████
+NTT Data         40%     90%     +50%   ████████████████████
+F5 Attack        15%     80%     +65%   █████████████████████████
+```
+
+---
+
+# 4.4 Complete Combined Rule Summary — What Each Rule Detects
 
 | Attack      | DLL Drift | Registry | SMB | OAuth | C2/Ports | BYOVD | Coverage |
 | ----------- | --------- | -------- | --- | ----- | -------- | ----- | -------- |
@@ -335,7 +349,75 @@ F5 Attack        15%     80%     +65%   █████████████�
 | MOVEit      | ▲         | ▲        | ✗   | ✗     | ✔        | ✗     | 65%      |
 | XZ Backdoor | ✔         | ✗        | ✗   | ✗     | ✔        | ✗     | 45%      |
 
+---
 
+# 5. Additional Rules That Would Improve Fidelity Further
+
+Below are the rules that would significantly enhance detection but were *not* included in the prototype:
+
+### 5.1 Golden SAML Detection  
+Detects forged SAML tokens and ADFS abuse — critical for SolarWinds-style identity pivot.
+
+### 5.2 MS17-010 / Exploit Telemetry Hunt  
+Would raise NotPetya coverage from 85% → ~95%.
+
+### 5.3 Standalone BYOVD Behavioural Rule  
+Detects:
+- Post-load driver behaviour  
+- Memory protection tampering  
+- AMSI bypassing  
+- LSASS read via driver  
+
+### 5.4 Cloud API Exfiltration Detection  
+For:
+- NTT Data  
+- F5 exfil  
+- Abuse of Azure/Graph APIs  
+
+### 5.5 DNS DGA Behavioural Model  
+Would detect:
+- SUNBURST  
+- 3CX  
+- UNC5221  
+- XZ Backdoor  
+
+### 5.6 LSASS Memory Access Rule  
+Full coverage for:
+- Credential harvesting (NotPetya, F5, SolarWinds stage-2)
+
+---
+
+# 6. Future Research — N-Day & Zero-Day Modelling Using Honeypot TI
+
+Modern attackers evolve faster than static IOCs.  
+To remain effective, detection must shift toward:
+
+### 6.1 Behavioural Pattern Modelling
+- Baseline drift  
+- Loader behaviour similarity  
+- File-system anomaly scoring  
+
+### 6.2 Honeypot-Driven TI  
+Creating:
+- Decoy OAuth apps  
+- Decoy driver signing environments  
+- Fake DLL load points  
+- API honeynet traps  
+
+### 6.3 Predictive N-Day Profiling  
+Mapping code-reuse patterns of APT groups:
+- loader structures  
+- C2 protocol reuse  
+- driver compile-time artefacts  
+
+### 6.4 Zero-Day Behaviour Detections  
+Focusing on invariants:
+- privilege escalation patterns  
+- DLL load anomalies  
+- kernel driver misuse  
+- identity-token forging chains  
+
+This will be a **future project** expanding your detection engineering portfolio with **AI-assisted TI correlation, honeypot telemetry ingestion, and early-signal behavioural analytics.**
 ---
 
 # 5. Key Takeaways
