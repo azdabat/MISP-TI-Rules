@@ -1,0 +1,98 @@
+// ===================================================================
+// SMB Lateral Movement — Enhanced (NotPetya / PsExec / WMI / SCExec)
+// ===================================================================
+
+// -------------------- Tunables --------------------
+let lookback = 7d;
+let corr_window = 15m;
+let propagation_threshold = 3;   // >=3 remote hosts = likely worm
+let procSet = dynamic(["psexec.exe","wmic.exe","powershell.exe","cmd.exe","sc.exe"]);
+
+// -------------------- SMB connection stage --------------------
+let SmbNet =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemotePort == 445
+| where InitiatingProcessFileName in (procSet)
+| extend SmbProc = InitiatingProcessFileName, SmbCmd = InitiatingProcessCommandLine
+| project SmbTime = Timestamp, DeviceId, DeviceName, RemoteIP, SmbProc, SmbCmd;
+
+// -------------------- ADMIN$ share writes --------------------
+let AdminShareWrites =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FolderPath matches regex @"(?i)^\\\\[A-Za-z0-9_\.-]+\\ADMIN\$"
+| extend TargetHost = tostring(extract(@"\\\\([^\\]+)\\ADMIN\$",1,FolderPath))
+| project FileTime = Timestamp, DeviceName, DeviceId, TargetHost, FolderPath, FileName, SHA256, InitiatingProcessFileName;
+
+// -------------------- Service creation / execution --------------------
+let ServiceExec =
+union
+(
+ DeviceProcessEvents
+ | where Timestamp >= ago(lookback)
+ | where FileName in ("psexesvc.exe","svchost.exe","services.exe")
+   or (ProcessCommandLine has_any ("psexec","\\ADMIN$","sc.exe create","sc.exe start"))
+ | project SvcTime=Timestamp, SvcHost=DeviceName, SvcFileName=FileName, SvcCmd=ProcessCommandLine, Initiator=InitiatingProcessFileName
+),
+(
+ SecurityEvent
+ | where EventID == 7045  // Service created
+ | extend SvcTime=TimeGenerated, SvcHost=Computer, SvcCmd=EventData, SvcFileName="ServiceCreation", Initiator="System"
+ | project SvcTime, SvcHost, SvcFileName, SvcCmd, Initiator
+);
+
+// -------------------- Kerberos / NTLM logon correlation --------------------
+let AuthLogons =
+SigninLogs
+| where TimeGenerated >= ago(lookback)
+| where ResultType == 0 and (AuthenticationRequirement == "multiFactorAuthentication" or AuthenticationProtocol in ("Kerberos","NTLM"))
+| project AuthTime=TimeGenerated, AccountUPN=UserPrincipalName, IPAddress;
+
+// -------------------- DNS enrichment --------------------
+let DnsMap =
+DnsEvents
+| where Timestamp >= ago(lookback)
+| project DnsTime=Timestamp, DeviceName, RemoteIP=IPAddress, ResolvedHost=Name;
+
+// -------------------- TI Enrichment --------------------
+let TiLookup =
+ThreatIntelligenceIndicator
+| where IndicatorType in ("IPv4","IP","DomainName","HostName")
+| project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel, ThreatType, Tags;
+
+// -------------------- Correlation --------------------
+let Corr =
+SmbNet
+| join kind=leftouter (DnsMap) on RemoteIP
+| extend TargetHost=coalesce(ResolvedHost,RemoteIP)
+| join kind=innerunique (
+    AdminShareWrites
+    | project FileTime, TargetHost, SrcDeviceName=DeviceName, FolderPath, FileName, SHA256
+) on TargetHost
+| where FileTime between (SmbTime .. SmbTime + corr_window)
+| join kind=innerunique (
+    ServiceExec
+    | project SvcTime, SvcHost, SvcFileName, SvcCmd, Initiator
+) on $left.TargetHost == $right.SvcHost
+| where SvcTime between (FileTime .. FileTime + corr_window)
+| join kind=leftouter (AuthLogons) on $left.DeviceName == $right.AccountUPN or $left.RemoteIP == $right.IPAddress
+| join kind=leftouter (TiLookup) on $left.RemoteIP == $right.TI_Indicator or $left.TargetHost == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence,50))
+| extend HostPropagationCount = dcount(TargetHost) over (DeviceName)
+| extend DetectionSignal=90, KillChainRelevance=85, TemporalScore=100
+| extend FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.2 + KillChainRelevance*0.2 + TemporalScore*0.1 + (HostPropagationCount*3),0))
+| extend FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM")
+| extend MITRE_Tactics="TA0008 Lateral Movement; TA0002 Execution; TA0006 Credential Access",
+         MITRE_Techniques="T1021.002 SMB/Admin Shares; T1569.002 Service Execution; T1078 Valid Accounts",
+         ThreatHunterDirective = case(
+            HostPropagationCount>=propagation_threshold,"IMMEDIATE: Likely worm; isolate source, block SMB, pivot to NTLM/Kerberos logs, extract dropped binaries.",
+            FinalRisk=="CRITICAL","IMMEDIATE: Isolate source host; confirm ADMIN$ payload; disable psexec; notify IR team.",
+            FinalRisk=="HIGH","URGENT: Review service creation on remote host; validate account legitimacy.",
+            "INVESTIGATE: Track ADMIN$ writes; baseline IT remote admin usage."
+         )
+| extend Evidence = pack("SMBProc",SmbProc,"SMBCmd",SmbCmd,"TargetHost",TargetHost,"AdminShareFile",FileName,"SvcFile",SvcFileName,"SvcCmd",SvcCmd,"PropagationCount",HostPropagationCount)
+| project SmbTime, DeviceName, RemoteIP, TargetHost, FolderPath, FileName,
+          SvcFileName, SvcCmd, AccountUPN, IntelConfidence, HostPropagationCount,
+          FinalScore, FinalRisk, MITRE_Tactics, MITRE_Techniques, ThreatHunterDirective, Evidence
+| order by FinalScore desc, SmbTime desc;
