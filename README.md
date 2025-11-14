@@ -35,12 +35,10 @@
   - [6.2 Honeypot-Driven TI](#62-honeypot-driven-ti)
   - [6.3 Predictive N-Day Profiling](#63-predictive-n-day-profiling)
   - [6.4 Zero-Day Behaviour Detections](#64-zero-day-behaviour-detections)
-- [5. Key Takeaways](#5-key-takeaways)
-- [5.1 Repository Navigation — Direct Links](#51-repository-navigation--direct-links-to-all-hunts)
-- [6. Additional Directories](#6-additional-directories)
-- [7. Closing Statement](#7-closing-statement)
-
-
+- [7. Key Takeaways](#7-key-takeaways)
+- [8. 📁 Repository Navigation — Direct Links](#8--repository-navigation--direct-links-to-all-hunts)
+- [9. Additional Directories](#9-additional-directories)
+- [10. Closing Statement](#10-closing-statement)
 
 ---
 
@@ -65,7 +63,7 @@ These rules combine:
 
 This report compares:
 - **Native baseline telemetry**  
-**vs**  
+- **vs**  
 - **A single CTI-integrated supply-chain drift detection rule**
 
 Even with only **6 core hunts**, uplift was significant:
@@ -73,8 +71,6 @@ Even with only **6 core hunts**, uplift was significant:
 - **+35% to +65% improvement** across evaluated attacks  
 - Detection of **signed malware**, **delayed implants**, **driver tampering**, **OAuth pivots**  
 - Full **kill-chain scoring**, **TI confidence weighting**, and **multi-signal fusion**  
-
-A full stack of **30–50 engineered analytics** would push fidelity far higher; this work demonstrates **how CTI + baseline drift + multi-signal correlation** expose modern supply-chain attacks that evade EDR.
 
 ---
 
@@ -93,10 +89,10 @@ A full stack of **30–50 engineered analytics** would push fidelity far higher;
 - MISP-matched hashes/domains  
 
 **Real Attack Coverage:**
-- **SolarWinds:** TEARDROP/RAINDROP registry footprints  
-- **3CX:** tampered loader DLL paths  
-- **F5/UNC5221:** malicious ServiceDll persistence  
-- **NotPetya:** IFEO/debugger anomalies  
+- **SolarWinds**  
+- **3CX**  
+- **F5/UNC5221**  
+- **NotPetya**
 
 ---
 
@@ -105,34 +101,21 @@ A full stack of **30–50 engineered analytics** would push fidelity far higher;
 **Detects:**
 - ADMIN$ propagation  
 - PsExec execution  
-- WMI process creation  
-- Service creation (ID 7045)  
-- Worm-like spreading  
-- DNS pivots + remote host mapping  
-- TI-enriched lateral movement  
-
-**Real Attack Coverage:**
-- **NotPetya:** EternalBlue + PsExec propagation  
-- **SolarWinds:** Cobalt Strike lateral pivots  
-- **F5:** pre–OAuth escalation movement  
-- **3CX:** follow-on spreads  
+- WMI  
+- Service creation (7045)  
+- DNS pivoting  
+- TI-enriched connections  
 
 ---
 
 ## OAuth App-Consent Abuse Hunt
 
 **Detects:**
-- High-risk delegated scopes (`*.ReadWrite.All`)  
+- High-risk delegated scopes  
 - Unknown publishers  
+- Suspicious user agents  
+- OAuth credential additions  
 - Malicious cloud apps  
-- Service Principal credential addition  
-- Suspicious user agents (`curl`, `python`, `go-http`)  
-- Offline token abuse  
-
-**Real Attack Coverage:**
-- **F5:** fake “F5 Network Manager” OAuth app  
-- **NTT Data:** tenant impersonation  
-- **SolarWinds & 3CX:** cloud pivot post-footprint  
 
 ---
 
@@ -143,52 +126,29 @@ A full stack of **30–50 engineered analytics** would push fidelity far higher;
 - Hostname anomalies  
 - LDAP 389/636 recon  
 - LSASS access attempts  
-- Credential dumping tools  
-- TI-hostname correlation  
-
-**Real Attack Coverage:**
-- **NotPetya:** LSASS tampering  
-- **F5:** LDAP recon from rogue dev hosts  
-- **SolarWinds:** Cobalt Strike credential staging  
+- Credential dumping  
 
 ---
 
 ## Suspicious Ports Rule (CSV + TI-Enriched)
 
 **Detects:**
-- Outbound C2  
-- Suspicious ports from external feeds  
-- DNS-over-HTTPS exfiltration  
-- RCE exploitation ports  
-- TI-signalled malicious endpoints  
-
-**Real Attack Coverage:**
-- **SolarWinds:** DNS/DGA C2  
-- **3CX:** HTTPS beaconing  
-- **NTT Data:** partner-portal anomalies  
-- **F5:** exfil to attacker infra  
+- C2 ports  
+- DOH exfiltration  
+- Suspicious RCE channels  
+- TI-matched IPs/domains  
 
 ---
 
 ## DLL / Driver Drift Rule (Supply-Chain Core)
 
 **Detects:**
-- DLL drift (version/signer/hash)  
-- Delayed activation (5 min → 30 days)  
-- Driver drops + kernel loads  
+- DLL signer/version/hash drift  
+- Delayed activation  
+- Driver loads  
 - Registry persistence  
-- Vendor process anomalies  
-- MISP hash & domain matches  
-- Kill-chain relevance scoring  
-
-**Catches:**
-- **SolarWinds:** SUNBURST DLL drift  
-- **3CX:** trojanized ffmpeg DLL  
-- **F5:** malicious driver load  
-- **NotPetya:** tampered update executables  
-- **NTT Data:** supply-chain modified binaries  
-
-This is the **flagship detection analytic**.
+- Network context  
+- MISP/OpenCTI matches  
 
 ---
 
@@ -197,47 +157,52 @@ This is the **flagship detection analytic**.
 ## SolarWinds (SUNBURST)
 ```
 [1] Build Pipeline Compromise
-     SUNSPOT injects trojanized Orion.BusinessLayer.dll
-     T1195.002 — Supply-Chain Compromise
+     SUNSPOT malware -> injects trojanized DLL
+     Replaced: Orion.Core.BusinessLayer.dll
+     Tactic: Initial Access | T1195.002
 
 [2] Signed Update Distribution
      Malicious DLL signed with SolarWinds certificate
 
-[3] Delayed Backdoor Activation
-     Environment checks → timed execution → SUNBURST loads
+[3] Backdoor Activation (Delayed)
+     Timed execution → environment checks
+     Loads SUNBURST
 
-[4] DNS C2
-     avsvmcloud[.]com (DGA-like rotating subdomains)
+[4] C2 via DNS
+     Domain: avsvmcloud[.]com
+     Rotating subdomains → DGA-like patterns
 
 [5] Stage-2 Payloads
      TEARDROP / RAINDROP (Cobalt Strike loaders)
 
 [6] Lateral Movement
-     PsExec, WMI, Azure AD tokens, Golden SAML
+     PsExec, WMI, Azure AD token abuse
+     Golden SAML
 
 [7] Persistence
-     Registry Run keys, Scheduled Tasks, ServiceDll
+     Run keys, Scheduled Tasks, ServiceDll
 ```
 
 ---
 
 ## NotPetya (M.E.Doc Supply Chain)
 ```
-[1] Trojanized Update
-     Delivered via trusted vendor
+[1] Trojanized M.E.Doc Update
+     Distributed by trusted vendor server
 
-[2] Credential Harvesting
-     LSASS access (4656, 4663)
-     Mimikatz usage
+[2] Recon & Credential Harvesting
+     Mimikatz → LSASS
+     EventIDs: 4656, 4663
 
-[3] Worm Propagation
-     MS17-010, EternalBlue, PsExec, WMI
+[3] Aggressive Propagation
+     MS17-010 (EternalBlue)
+     WMI + PsExec lateral movement
 
-[4] Payload Execution
-     Disk wiper (not real ransomware)
+[4] Payload Activation
+     Disk wiper disguised as ransomware
 
-[5] Domain-Wide Impact
-     Harvested creds → total compromise
+[5] Network-wide Worm Spread
+     Harvested creds → domain takeover
 ```
 
 ---
@@ -245,20 +210,21 @@ This is the **flagship detection analytic**.
 ## F5 / UNC5221 (2025)
 ```
 [1] Malicious Driver Drop
-     f5vpndriver.sys (signed malicious)
+     f5vpndriver.sys | Signed via abused CA
 
 [2] Persistence
-     ServiceDll tampering under CCS\Services
+     ServiceDll under HKLM\SYSTEM\CCS\Services\*
 
 [3] C2 + Lateral Movement
-     Admin$ shares, WMI, C2: 185.159.82.18
+     Admin$ shares, WMI remote exec
+     C2 IP: 185.159.82.18
 
 [4] Cloud Pivot
-     Fake OAuth App: "F5 Network Manager"
+     Malicious OAuth App: "F5 Network Manager"
      Scopes: Files.ReadWrite.All, Directory.Read.All
 
 [5] Exfiltration
-     HTTPS → attacker cloud infra
+     HTTPS → attacker-controlled cloud infra
 ```
 
 ---
@@ -266,19 +232,19 @@ This is the **flagship detection analytic**.
 ## NTT Data / Vectorform (2022–2025)
 ```
 [1] Credential Exposure
-     GitHub secrets, PAT tokens, AWS keys
+     GitHub secrets, AWS keys, PAT tokens
 
 [2] Initial Access
      Fake domain: ntt-orders[.]com
 
 [3] Cloud Data Exfiltration
-     Customer metadata
+     Customer metadata, order systems
 
 [4] Victimology Analysis
-     Industry, client relationships
+     Industry, region, client relationships
 
 [5] Cross-Tenant Pivot
-     SSO trust chain weaknesses exploited
+     SSO weaknesses, reused credentials
 ```
 
 ---
@@ -291,11 +257,11 @@ This is the **flagship detection analytic**.
 
 | Attack | Coverage | Strongest Native Rules | Gaps |
 |-------|----------|------------------------|------|
-| **SolarWinds** | 🟩🟨⬜⬜⬜ (40%) | Port Hunt, Registry Persistence | Signed DLL bypass |
-| **NotPetya** | 🟩🟩🟩⬜⬜ (60%) | Registry, LSASS, SMB | No supply-chain view |
-| **3CX** | 🟩🟨⬜⬜⬜ (35%) | Rogue Processes | AuthentiCode bypass |
-| **NTT Data** | 🟩🟨⬜⬜⬜ (40%) | OAuth, Rogue | No tenant correlation |
-| **F5** | 🟨⬜⬜⬜⬜ (15%) | Driver Loads | No drift/persistence |
+| SolarWinds | 🟩🟨⬜⬜⬜ (40%) | Port Hunt, Registry Persistence | Signed DLL bypass |
+| NotPetya | 🟩🟩🟩⬜⬜ (60%) | Registry, LSASS, SMB | No supply-chain view |
+| 3CX | 🟩🟨⬜⬜⬜ (35%) | Rogue Processes | AuthentiCode bypass |
+| NTT Data | 🟩🟨⬜⬜⬜ (40%) | OAuth, Rogue Devices | No tenant correlation |
+| F5 | 🟨⬜⬜⬜⬜ (15%) | Driver Loads | No driver drift |
 
 ---
 
@@ -303,24 +269,22 @@ This is the **flagship detection analytic**.
 
 | Attack | CTI Coverage | Strongest CTI Rules | Improvements |
 |--------|--------------|----------------------|--------------|
-| **SolarWinds** | 🟩🟩🟩🟨⬜ (75%) | DLL Drift + DNS TI | Adds signer + hash drift |
-| **NotPetya** | 🟩🟩🟩🟩⬜ (85%) | SMB Worming + IFEO | Adds MS17-010 TI |
-| **3CX** | 🟩🟩🟩🟩⬜ (90%) | DLL Drift + Dormancy | Detects delayed loader |
-| **NTT** | 🟩🟩🟩🟩⬜ (90%) | OAuth + TI-IP | Detects tenant pivot |
-| **F5** | 🟩🟩🟩🟨⬜ (80%) | Driver Drift + ServiceDll | Adds C2 TI |
+| SolarWinds | 🟩🟩🟩🟨⬜ (75%) | DLL Drift + TI C2 | Signer/hash drift |
+| NotPetya | 🟩🟩🟩🟩⬜ (85%) | SMB Worming + Registry | MS17-010 TI |
+| 3CX | 🟩🟩🟩🟩⬜ (90%) | DLL Drift + Dormancy | Delayed loader |
+| NTT | 🟩🟩🟩🟩⬜ (90%) | OAuth + TI-IP | Cloud pivot |
+| F5 | 🟩🟩🟩🟨⬜ (80%) | Driver Drift + ServiceDll | Adds C2 TI |
 
 ---
 
 ## C. Percentage Improvement (Native → CTI)
 
 ```
-Attack          Native   CTI    Improvement
---------------------------------------------------------
-SolarWinds       40%     75%     +35%   ██████████████
-NotPetya         60%     85%     +25%   ████████
-3CX              35%     90%     +55%   █████████████████████
-NTT Data         40%     90%     +50%   ████████████████████
-F5 Attack        15%     80%     +65%   █████████████████████████
+SolarWinds  +35%
+NotPetya    +25%
+3CX         +55%
+NTT Data    +50%
+F5 Attack   +65%
 ```
 
 ---
@@ -330,16 +294,17 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Detection Category | Detected? | Explanation |
 |--------------------|-----------|-------------|
 | DLL sideloading | ✔ | SolarWinds, 3CX |
-| Fast DLL load | ✔ | Drop → execute |
-| Delayed activation | ✔ | Stage-2 implants |
-| Dormant loaders | ✔ | SolarWinds-style |
-| Integrity drift | ✔ | signer/hash/version |
+| Fast DLL load | ✔ | Drop-execute |
+| Delayed activation | ✔ | Stage-2 |
+| Dormant loaders | ✔ | Long-term |
+| Integrity drift | ✔ | Version/signer/hash |
 | Registry persistence | ✔ | COM, IFEO, LSA |
 | Driver drops | ✔ | UNC5221-style |
-| Network IOC match | ✔ | TI IP/domain |
+| Network IOC match | ✔ | TI |
 | MISP hash match | ✔ | TIFile |
 
 ---
+
 # 4.1 Complete Combined Rule Summary — What Each Rule Detects
 
 | Attack      | DLL Drift | Registry | SMB | OAuth | C2/Ports | BYOVD | Coverage |
@@ -354,130 +319,80 @@ F5 Attack        15%     80%     +65%   █████████████�
 
 ---
 
-## 5. Additional Rules That Would Improve Fidelity Further
-
-Below are the rules that would significantly enhance detection but were *not* included in the prototype:
+# 5. Additional Rules That Would Improve Fidelity Further
 
 ### 5.1 Golden SAML Detection  
-Detects forged SAML tokens and ADFS abuse — critical for SolarWinds-style identity pivot.
-
 ### 5.2 MS17-010 / Exploit Telemetry Hunt  
-Would raise NotPetya coverage from 85% → ~95%.
-
 ### 5.3 Standalone BYOVD Behavioural Rule  
-Detects:
-- Post-load driver behaviour  
-- Memory protection tampering  
-- AMSI bypassing  
-- LSASS read via driver
-
----
-
 ### 5.4 Cloud API Exfiltration Detection  
-For:
-- NTT Data  
-- F5 exfil  
-- Abuse of Azure/Graph APIs  
-
 ### 5.5 DNS DGA Behavioural Model  
-Would detect:
-- SUNBURST  
-- 3CX  
-- UNC5221  
-- XZ Backdoor  
-
 ### 5.6 LSASS Memory Access Rule  
-Full coverage for:
-- Credential harvesting (NotPetya, F5, SolarWinds stage-2)
+
 ---
+
 # 6. Future Research — N-Day & Zero-Day Modelling Using Honeypot TI
 
-Modern attackers evolve faster than static IOCs.  
-To remain effective, detection must shift toward:
-
-### 6.1 Behavioural Pattern Modelling
-- Baseline drift  
-- Loader behaviour similarity  
-- File-system anomaly scoring  
-
+### 6.1 Behavioural Pattern Modelling  
 ### 6.2 Honeypot-Driven TI  
-Creating:
-- Decoy OAuth apps  
-- Decoy driver signing environments  
-- Fake DLL load points  
-- API honeynet traps  
-
 ### 6.3 Predictive N-Day Profiling  
-Mapping code-reuse patterns of APT groups:
-- loader structures  
-- C2 protocol reuse  
-- driver compile-time artefacts  
-
 ### 6.4 Zero-Day Behaviour Detections  
-Focusing on invariants:
-- privilege escalation patterns  
-- DLL load anomalies  
-- kernel driver misuse  
-- identity-token forging chains  
 
-This will be a **future project** expanding your detection engineering portfolio with **AI-assisted TI correlation, honeypot telemetry ingestion, and early-signal behavioural analytics.**
-```
-# 5. Key Takeaways
+---
 
-- **MISP converts behaviours into intelligence-driven detections.**  
-- **Baseline drift** is a universal supply-chain signal.  
-- **OAuth detection** closes cloud blindspots.  
-- **Driver drift** exposes kernel-level compromises.  
-- **Multi-signal fusion** (DLL + driver + registry + DNS + TI) is essential for modern 2025 threats.
+# 7. Key Takeaways
 
-```
+- **MISP converts behaviour to intelligence.**  
+- **Baseline drift** = universal supply-chain signal.  
+- **OAuth** closes cloud blindspots.  
+- **Driver drift** exposes kernel compromise.  
+- **Multi-signal fusion** is essential.  
 
-# 5.1 📁 Repository Navigation — Direct Links to All Hunts
+---
 
-Below are the direct links to each analytic rule in this repository, organised by folder.
+# 8. 📁 Repository Navigation — Direct Links to All Hunts
 
 ### Supply-Chain & Binary Drift Detection
-| Rule | Description | Link |
-|------|-------------|------|
-| **Supply-Chain DLL Hunt** | Full DLL sideloading + drift detection | https://github.com/azdabat/MISP-TI-Rules/tree/main/Supply-Chain%20DLL%20Hunt |
+| Rule | Link |
+|------|------|
+| Supply-Chain DLL Hunt | https://github.com/azdabat/MISP-TI-Rules/tree/main/Supply-Chain%20DLL%20Hunt |
 
-### BYOVD / Malicious Driver Detection
-| Rule | Description | Link |
-|------|-------------|------|
-| **BYOVD_Malicious_Driver_Detection** | Detects malicious/vulnerable drivers | https://github.com/azdabat/MISP-TI-Rules/tree/main/BYOVD-Malicious_Driver_Detection/BYOVD_Detection_Rule_TI_MISP.kql |
+### BYOVD Detection
+| Rule | Link |
+|------|------|
+| BYOVD | https://github.com/azdabat/MISP-TI-Rules/tree/main/BYOVD-Malicious_Driver_Detection |
 
-### OAuth Consent Abuse Detection
-| Rule | Description | Link |
-|------|-------------|------|
-| **OAuth_Consent Abuse (TI)** | Detects malicious OAuth apps | https://github.com/azdabat/MISP-TI-Rules/tree/main/OAuth_Consent_TTI_MISP_Confidence/0Auth_consent_threat_hunt_ti.kql |
+### OAuth Consent Abuse
+| Rule | Link |
+|------|------|
+| OAuth TI | https://github.com/azdabat/MISP-TI-Rules/tree/main/OAuth_Consent_TTI_MISP_Confidence |
 
-### Registry Persistence Detection
-| Rule | Description | Link |
-|------|-------------|------|
-| **Registry Persistence (MISP)** | Detects persistence chains | https://github.com/azdabat/MISP-TI-Rules/tree/main/Registry%20Persistence%20MISP%20Detection/Registry%20Persistence%20Detection-MISP-Enriched-Adaptive.kql |
+### Registry Persistence
+| Rule | Link |
+|------|------|
+| Registry Persistence | https://github.com/azdabat/MISP-TI-Rules/tree/main/Registry%20Persistence%20MISP%20Detection |
 
 ### SMB Lateral Movement
-| Rule | Description | Link |
-|------|-------------|------|
-| **SMB Lateral Movement — Enhanced** | NotPetya-style worm detection | https://github.com/azdabat/MISP-TI-Rules/tree/main/SMB-Later-Movement/SMB%20Lateral%20Movement%20%E2%80%94%20Enhanced.kql |
+| Rule | Link |
+|------|------|
+| SMB Lateral Movement | https://github.com/azdabat/MISP-TI-Rules/tree/main/SMB-Later-Movement |
 
 ### TOR Exit Node Detection
-| Rule | Description | Link |
-|------|-------------|------|
-| **TOR Exit Node Threat Hunt** | Detects TOR-based activity | https://github.com/azdabat/MISP-TI-Rules/tree/main/TOR-Exit-Node-Detection/TOR-ExitNode-Detection.kql |
+| Rule | Link |
+|------|------|
+| TOR Detection | https://github.com/azdabat/MISP-TI-Rules/tree/main/TOR-Exit-Node-Detection |
 
 ---
 
-# 6. Additional Directories
+# 9. Additional Directories
 
-| Folder | Purpose | Link |
-|--------|----------|------|
-| **Repo Root** | View all content | https://github.com/azdabat/MISP-TI-Rules/tree/main |
-| **All KQL Rules** | Rule index | https://github.com/azdabat/MISP-TI-Rules/tree/main |
+| Folder | Link |
+|--------|------|
+| Repo Root | https://github.com/azdabat/MISP-TI-Rules/tree/main |
+| All KQL Rules | https://github.com/azdabat/MISP-TI-Rules/tree/main |
 
 ---
 
-# 7. Closing Statement
+# 10. Closing Statement
 
 > *"The best detections combine behavioral telemetry with contextual intelligence.  
 Ala Dabat’s MISP-integrated KQL hunts demonstrate exactly that — native analytics elevated through intelligence."*
