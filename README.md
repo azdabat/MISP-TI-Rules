@@ -6,25 +6,40 @@
 # Table of Contents
 - [Overview](#overview)
 - [1. How the Rules Improve Detection Fidelity](#1-how-the-rules-improve-detection-fidelity)
-  - [Registry Persistence Detection](#registry-persistence-detection-misp-enriched)
-  - [SMB Lateral Movement Detection](#advanced-smb-lateral-movement-detection-notpetya-style)
-  - [OAuth Consent Abuse Hunt](#oauth-app-consent-abuse-hunt)
-  - [Rogue Endpoint  LDAP  LSASS Hunt](#rogue-endpoint--ldap--lsass-hunt)
-  - [Suspicious Ports  TI Hunt](#suspicious-ports-rule-csv--ti-enriched)
-  - [Supply-Chain DLL  Driver Drift Rule](#dll--driver-drift-rule-supply-chain-core)
+  - [Registry Persistence Detection (MISP-Enriched)](#registry-persistence-detection-misp-enriched)
+  - [Advanced SMB Lateral Movement Detection (NotPetya-Style)](#advanced-smb-lateral-movement-detection-notpetya-style)
+  - [OAuth App-Consent Abuse Hunt](#oauth-app-consent-abuse-hunt)
+  - [Rogue Endpoint + LDAP + LSASS Hunt](#rogue-endpoint--ldap--lsass-hunt)
+  - [Suspicious Ports Rule (CSV + TI-Enriched)](#suspicious-ports-rule-csv--ti-enriched)
+  - [DLL / Driver Drift Rule (Supply-Chain Core)](#dll--driver-drift-rule-supply-chain-core)
 - [2. Enhanced ASCII Supply-Chain Attack Diagrams](#2-enhanced-ascii-supply-chain-attack-diagrams)
-  - [SolarWinds](#solarwinds-sunburst)
-  - [NotPetya](#notpetya-medoc-supply-chain)
-  - [F5  unc5221](#f5--unc5221-2025)
-  - [ntt-data--vectorform](#ntt-data--vectorform-20222025)
+  - [SolarWinds (SUNBURST)](#solarwinds-sunburst)
+  - [NotPetya (MEdoc-Supply-Chain)](#notpetya-medoc-supply-chain)
+  - [F5 / UNC5221 (2025)](#f5--unc5221-2025)
+  - [NTT Data / Vectorform (2022–2025)](#ntt-data--vectorform-20222025)
 - [3. Detection Coverage Matrices](#3-detection-coverage-matrices)
-  - [Native Baseline](#a-native-detection-strength-baseline-only)
-  - [CTI-Integrated](#b-cti-integrated-detection-strength-your-advanced-rule)
-  - [Percentage Improvement](#c-percentage-improvement-native--cti)
-- [4. Combined Rule Suite – What Each Rule Detects](#4-combined-rule-suite--what-each-rule-detects)
+  - [A. Native Detection Strength (Baseline Only)](#a-native-detection-strength-baseline-only)
+  - [B. CTI-Integrated Detection Strength](#b-cti-integrated-detection-strength)
+  - [C. Percentage Improvement (Native-→-CTI)](#c-percentage-improvement-native--cti)
+- [4. Combined Rule Suite Summary — What Each Rule Detects](#4-combined-rule-suite--what-each-rule-detects)
+  - [4.4 Complete Combined Rule Summary Table](#44-complete-combined-rule-summary--what-each-rule-detects)
+- [5. Additional Rules That Would Improve Fidelity Further](#5-additional-rules-that-would-improve-fidelity-further)
+  - [Golden SAML](#51-golden-saml-detection)
+  - [MS17-010 Exploit Hunt](#52-ms17-010--exploit-telemetry-hunt)
+  - [Standalone BYOVD Behaviour Rule](#53-standalone-byovd-behavioural-rule)
+  - [Cloud API Exfiltration Detection](#54-cloud-api-exfiltration-detection)
+  - [DNS DGA Behaviour Model](#55-dns-dga-behavioural-model)
+  - [LSASS Memory Access Rule](#56-lsass-memory-access-rule)
+- [6. Future Research — N-Day & Zero-Day Modelling Using Honeypot TI](#6-future-research--n-day--zero-day-modelling-using-honeypot-ti)
+  - [Behavioural Pattern Modelling](#61-behavioural-pattern-modelling)
+  - [Honeypot-Driven TI](#62-honeypot-driven-ti)
+  - [Predictive N-Day Profiling](#63-predictive-n-day-profiling)
+  - [Zero-Day Behaviour Detections](#64-zero-day-behaviour-detections)
 - [5. Key Takeaways](#5-key-takeaways)
-- [6. Repository Navigation (Direct Links to All Hunts)](#-repository-navigation--direct-links-to-all-hunts)
+- [5.1 Repository Navigation — Direct Links](#51--repository-navigation--direct-links-to-all-hunts)
+- [6. Additional Directories](#6-additional-directories)
 - [7. Closing Statement](#7-closing-statement)
+
 
 ---
 
@@ -430,7 +445,7 @@ This will be a **future project** expanding your detection engineering portfolio
 
 ---
 
-# 📁 Repository Navigation — Direct Links to All Hunts
+# 5.1 📁 Repository Navigation — Direct Links to All Hunts
 
 Below are the direct links to each analytic rule in this repository, organised by folder.
 
