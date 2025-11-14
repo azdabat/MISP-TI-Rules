@@ -1,0 +1,106 @@
+// Registry Persistence Detection (MISP-enriched, Adaptive)
+// Author: Ala Dabat
+let lookback = 14d;
+
+let PersistenceKeys = dynamic([
+  @"HKLM\Software\Microsoft\Windows\CurrentVersion\Run", @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+  @"HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce", @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+  @"HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run", @"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run",
+  @"HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components", @"HKCU\SOFTWARE\Microsoft\Active Setup\Installed Components",
+  @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Userinit",
+  @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Shell", @"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Shell",
+  @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Windows\AppInit_DLLs",
+  @"HKLM\SYSTEM\CurrentControlSet\Services",
+  @"HKCU\Software\Classes\mscfile\shell\open\command", @"HKCU\Software\Classes\exefile\shell\open\command",
+  @"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths", @"HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths",
+  @"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options",
+  @"HKCU\Software\Classes\CLSID", @"HKLM\Software\Classes\CLSID",
+  @"HKLM\SYSTEM\CurrentControlSet\Control\Lsa",
+  @"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+  @"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce",
+  @"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+]);
+
+let UserWritableRx = @"(?i)^[a-z]:\\(users|public|programdata|temp|downloads|appdata)\\";
+let Base64ChunkedRx = @"(?:[A-Za-z0-9+/]{20,}={0,2})(?:\s+[A-Za-z0-9+/]{20,}={0,2})+";
+let IPv4Rx = @"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b";
+let DomainRx = @"\b([a-z0-9][a-z0-9\-]{1,62}\.)+[a-z]{2,}\b";
+
+let TrustedPublishers = dynamic(["Microsoft Corporation","Microsoft Windows","Google LLC","Mozilla Corporation"]);
+let TrustedInitiators = dynamic(["msiexec.exe","IntuneManagementExtension.exe","sppsvc.exe","UpdateInstaller.exe"]);
+
+let OrgPrevalence = DeviceFileEvents
+| where Timestamp >= ago(30d)
+| summarize DeviceCount=dcount(DeviceId) by SHA256, FileName, FolderPath;
+
+let Raw = DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any (PersistenceKeys)
+| extend ValueData = tostring(RegistryValueData), ValueName = tostring(RegistryValueName), RegistryKeyLower = tolower(RegistryKey)
+| extend LowerData = tolower(ValueData);
+
+let WithProc = Raw
+| join kind=leftouter (
+    DeviceProcessEvents
+    | project ProcTime = Timestamp, DeviceId, InitiatingProcessId,
+              ProcFile=InitiatingProcessFileName, ProcPath=InitiatingProcessFolderPath,
+              ProcCL=InitiatingProcessCommandLine, ProcSHA=InitiatingProcessSHA256,
+              ProcSigner=InitiatingProcessSigner, ProcCompany=InitiatingProcessVersionInfoCompanyName,
+              ProcUser=InitiatingProcessAccountName
+) on InitiatingProcessId, DeviceId;
+
+let WithIOC =
+WithProc
+| extend
+    HasBadString = toint(LowerData has_any (dynamic(["-encodedcommand","-enc","-ep bypass","iex(","invoke-expression","frombase64string","invoke-webrequest","downloadstring","start-bitstransfer","rundll32","regsvr32","mshta","certutil","bitsadmin","curl"]))),
+    HasBase64 = toint(LowerData matches regex Base64ChunkedRx or ProcCL matches regex Base64ChunkedRx),
+    HasNet = toint(LowerData matches regex @"https?://[^\s'\"]+" or LowerData matches regex IPv4Rx or LowerData matches regex DomainRx),
+    PointsToUserWritable = toint(LowerData matches regex UserWritableRx or LowerData contains "\\appdata\\" or LowerData contains "\\programdata\\" or LowerData contains "\\temp\\"),
+    SuspFileRef = toint(LowerData matches regex @"(?i)\.(exe|dll|js|jse|vbs|ps1|bat|cmd|scr)\b"),
+    IsIFEO = toint(RegistryKeyLower has @"\image file execution options"),
+    IsCOM = toint(RegistryKeyLower has @"\clsid\\" and RegistryKeyLower has @"inprocserver32"),
+    IsLSA = toint(RegistryKeyLower has @"\control\lsa"),
+    IsTrustedPublisher = iif(ProcSigner in (TrustedPublishers) or ProcCompany in (TrustedPublishers), 1, 0),
+    InitiatorTrusted = iif(ProcFile in (TrustedInitiators), 1, 0);
+
+let Enriched =
+WithIOC
+| join kind=leftouter (OrgPrevalence) on $left.ProcSHA == $right.SHA256
+| extend DeviceCount = coalesce(DeviceCount, 0), IsRare = iif(DeviceCount <= 2, 1, 0);
+
+Enriched
+| extend DetectionSignal =
+    HasBadString + HasBase64 + HasNet + PointsToUserWritable + (1 - IsTrustedPublisher) + IsRare + (IsIFEO or IsCOM or IsLSA)
+| where DetectionSignal >= 3
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore, TlpLevel, ThreatType, Tags
+) on $left.ProcFile == $right.TI_Indicator or $left.ProcSHA == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence,50)),
+         KillChainRelevance = 80,
+         TemporalScore = 100,
+         FinalScore = toint(round(DetectionSignal*0.4 + IntelConfidence*0.3 + KillChainRelevance*0.2 + TemporalScore*0.1)),
+         FinalRisk = case(FinalScore>=90,"CRITICAL", FinalScore>=70,"HIGH", "MEDIUM"),
+         MITRE_Tactics = "TA0003 Persistence; TA0002 Execution; TA0005 Defense Evasion",
+         MITRE_Techniques = strcat_array(pack_array(
+           iif(HasBadString==1 and ProcCL has "powershell","T1059.001 PowerShell",""),
+           iif(HasBadString==1 and ProcCL has "regsvr32","T1218.010 Regsvr32",""),
+           iif(HasBadString==1 and ProcCL has "rundll32","T1218.011 Rundll32",""),
+           iif(HasBadString==1 and ProcCL has "mshta","T1218.005 Mshta",""),
+           iif(HasNet==1,"T1105 Ingress Tool Transfer",""),
+           iif(IsIFEO==1,"T1546.012 IFEO Injection",""),
+           iif(IsCOM==1,"T1546.015 COM Hijacking",""),
+           iif(IsLSA==1,"T1547.009 LSA/SSP",""),
+           iif(tolower(RegistryKey) has @"\run","T1547.001 Run Keys",""),
+           iif(tolower(RegistryKey) has @"\services","T1543.003 Windows Service","")
+         ), "; "),
+         ThreatHunterDirective = case(
+            FinalRisk=="CRITICAL","IMMEDIATE: isolate host, pull memory, block indicators, add MISP sighting; review ProcCL & parents.",
+            FinalRisk=="HIGH","URGENT: verify autorun legitimacy, confirm signer/company, pivot to NetEvents & file writes.",
+            "INVESTIGATE: validate autorun purpose, monitor recurrence; trend user/machine."
+         )
+| project FirstSeen=ProcTime, DeviceName, ProcUser, ProcCompany, ProcSigner, ProcFile, ProcSHA,
+          RegistryKey, ValueName, ValueData, DetectionSignal, IntelConfidence, FinalScore, FinalRisk,
+          MITRE_Tactics, MITRE_Techniques, ThreatHunterDirective
+| order by FinalScore desc, FirstSeen desc
