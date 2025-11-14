@@ -339,7 +339,6 @@ F5 Attack        15%     80%     +65%   █████████████�
 | Network IOC match | ✔ | TI IP/domain |
 | MISP hash match | ✔ | TIFile |
 
-
 ```
 # 4.1 Complete Combined Rule Summary — What Each Rule Detects
 
@@ -355,7 +354,7 @@ F5 Attack        15%     80%     +65%   █████████████�
 
 ---
 
-# 5. Additional Rules That Would Improve Fidelity Further
+## 5. Additional Rules That Would Improve Fidelity Further
 
 Below are the rules that would significantly enhance detection but were *not* included in the prototype:
 
