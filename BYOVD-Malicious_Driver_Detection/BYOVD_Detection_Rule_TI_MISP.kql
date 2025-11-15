@@ -22,7 +22,8 @@ let MISP_Driver_IOCs = externaldata(
     orgc:string
 )
 [
-  "https://misp.instance.com/events/restsearch/download/format:csv/tags:byovd||driver_malicious||driver_vulnerable"
+  "https://misp.instance.com/events/restsearch/download/format:csv/tags:byovd||driver_malicious||driver_vulnerable" //can also include your own external CVS repository https://github.com/mthcht/awesome-lists/blob/main/Lists/Drivers/loldrivers_only_hashes_list.csv
+
 ]
 with (format="csv", ignoreFirstRecord=true, ignoreEmpty=true)
 | where confidence >= 70
