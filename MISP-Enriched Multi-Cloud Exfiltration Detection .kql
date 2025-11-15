@@ -1,0 +1,174 @@
+// ============================================================================
+// MISP-Enriched Multi-Cloud Exfiltration Detection (Confidence-Scored)
+// Depends on: Multi-Cloud Storage API Abuse signal (inline below)
+// Author: Ala Dabat 
+// ============================================================================
+
+let lookback = 14d;
+
+// --- Domain lists (same as multi-cloud rule, truncated for brevity)
+let dropboxDomains = dynamic(["api.dropboxapi.com","content.dropboxapi.com","notify.dropboxapi.com","www.dropbox.com","dl.dropboxusercontent.com"]);
+let gdriveDomains  = dynamic(["drive.google.com","docs.google.com","www.googleapis.com"]);
+let onedriveDomains = dynamic(["onedrive.live.com","graph.microsoft.com","sharepoint.com","sharepoint-df.com"]);
+let boxDomains     = dynamic(["api.box.com","box.com"]);
+let megaDomains    = dynamic(["mega.nz","api.mega.nz"]);
+let allowedBrowsers = dynamic(["chrome.exe","msedge.exe","firefox.exe","iexplore.exe"]);
+
+// ============================================================================
+// 1) BASE MULTI-CLOUD EXFIL SIGNAL (same logic as rule #1 but as a function)
+// ============================================================================
+let MultiCloudExfil = 
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemotePort in (80, 443)
+| where isnotempty(RemoteUrl)
+| extend 
+    ProcessName = tolower(InitiatingProcessFileName),
+    FolderPath  = tolower(InitiatingProcessFolderPath),
+    ParentName  = tolower(InitiatingProcessParentFileName)
+| extend CloudService = case(
+    RemoteUrl has_any(dropboxDomains), "Dropbox",
+    RemoteUrl has_any(gdriveDomains),  "GoogleDrive",
+    RemoteUrl has_any(onedriveDomains), "OneDrive",
+    RemoteUrl has_any(megaDomains),    "MEGA",
+    RemoteUrl has_any(boxDomains),     "Box",
+    "Unknown"
+)
+| where CloudService != "Unknown"
+| extend IsOfficialClient = case(
+    CloudService == "Dropbox"   and (ProcessName has "dropbox"   or FolderPath has "\\dropbox\\"),   true,
+    CloudService == "OneDrive"  and (ProcessName has "onedrive"  or FolderPath has "\\onedrive\\"),  true,
+    CloudService == "GoogleDrive" and (ProcessName has_any(dynamic(["googledrivesync.exe","google drive"])) 
+                                       or FolderPath has "\\google\\drive\\"),                       true,
+    CloudService == "Box"       and (ProcessName has "box"       or FolderPath has "\\box\\"),       true,
+    CloudService == "MEGA"      and (ProcessName has "mega"      or FolderPath has "\\mega\\"),      true,
+    false
+)
+| extend 
+    IsBrowser = ProcessName in (allowedBrowsers),
+    IsSystem  = ProcessName in~ ("svchost.exe","services.exe","system","lsass.exe","winlogon.exe"),
+    IsOffice  = ProcessName in~ ("winword.exe","excel.exe","outlook.exe","powerpnt.exe")
+| where IsOfficialClient == false
+| where IsBrowser == false
+| where SentBytes > 500000
+| extend 
+    SuspiciousParent = case(
+        ParentName in~ ("powershell.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe"), "Script Parent",
+        ParentName in~ ("rundll32.exe","regsvr32.exe","msiexec.exe"),                         "LOLBin Parent",
+        ParentName in~ ("svchost.exe","services.exe"),                                       "Unexpected System Parent",
+        "Other"
+    ),
+    DataVolumeIndicator = case(
+        SentBytes > 50*1024*1024, "Massive Upload (>50MB)",
+        SentBytes > 10*1024*1024, "Large Upload (>10MB)",
+        SentBytes >  1*1024*1024, "Medium Upload (>1MB)",
+        "Normal"
+    ),
+    BaseRiskScore = 0
+        + iif(IsSystem, 9, 0)
+        + iif(SuspiciousParent == "LOLBin Parent", 7, 0)
+        + iif(SuspiciousParent == "Script Parent", 6, 0)
+        + iif(IsOffice, 5, 0)
+        + iif(DataVolumeIndicator == "Massive Upload (>50MB)", 6, 0)
+        + iif(DataVolumeIndicator == "Large Upload (>10MB)",   4, 0)
+        + iif(DataVolumeIndicator == "Medium Upload (>1MB)",   2, 0)
+| extend RemoteHost = tostring(parse_url(RemoteUrl).Host)
+;
+
+// ============================================================================
+// 2) MISP INDICATORS (confidence-scored)
+//    - Assumes MISP feeds populate ThreatIntelligenceIndicator
+// ============================================================================
+let MispCloudTI =
+ThreatIntelligenceIndicator
+| where TimeGenerated >= ago(60d)        // TI window
+| where SourceSystem == "MISP"
+| where ConfidenceScore >= 40            // ignore low-confidence noise
+| where isnotempty(DomainName) or isnotempty(Url)
+| extend IndicatorHost = iff(
+        isnotempty(DomainName),
+        DomainName,
+        tostring(parse_url(Url).Host)
+    )
+| project 
+    TIIndicatorId   = IndicatorId,
+    IndicatorHost,
+    TIThreatType    = ThreatType,
+    MISP_Confidence = ConfidenceScore,
+    MISP_Description = Description,
+    MISP_Tags       = Tags,
+    TI_Source       = SourceSystem
+;
+
+// ============================================================================
+// 3) JOIN BASE SIGNAL WITH MISP INDICATORS
+// ============================================================================
+MultiCloudExfil
+| lookup kind=inner (MispCloudTI) on $left.RemoteHost == $right.IndicatorHost
+| extend 
+    MISP_ConfidenceBucket = case(
+        MISP_Confidence >= 80, "High",
+        MISP_Confidence >= 60, "Medium",
+        MISP_Confidence >= 40, "Low",
+        "Unknown"
+    ),
+    // Confidence-sourced risk add-on
+    MISP_RiskBoost = case(
+        MISP_ConfidenceBucket == "High",   4,
+        MISP_ConfidenceBucket == "Medium", 2,
+        MISP_ConfidenceBucket == "Low",    1,
+        0
+    ),
+    CombinedRiskScore = minof(10, BaseRiskScore + MISP_RiskBoost)
+
+// ============================================================================
+// 4) HUNTER DIRECTIVES (MISP-AWARE)
+// ============================================================================
+| extend HunterDirective = case(
+
+    MISP_ConfidenceBucket == "High",
+        "CRITICAL (MISP): Multi-cloud exfil signal to host '" + RemoteHost + 
+        "' that matches a **HIGH confidence** MISP indicator (" + TIIndicatorId + "). " +
+        "Immediately isolate host, review MISP event details and tags: " + tostring(MISP_Tags) + 
+        ". Confirm data types exfiltrated and check for lateral movement.",
+
+    MISP_ConfidenceBucket == "Medium",
+        "HIGH (MISP): Suspicious multi-cloud traffic correlated with **MEDIUM confidence** MISP IoC (" + TIIndicatorId + 
+        "). Validate if exfil aligns with this threat type: " + tostring(TIThreatType) + 
+        ". Prioritise triage and cross-check against other detections in same timeframe.",
+
+    MISP_ConfidenceBucket == "Low",
+        "MEDIUM (MISP): Multi-cloud signal overlaps with **LOW confidence** MISP indicator (" + TIIndicatorId + 
+        "). Treat as supporting intel; correlate with user, host, and parallel alerts before escalation.",
+
+    "INFO: Multi-cloud exfil signal correlated with MISP IoC, but confidence bucket is unknown. " +
+    "Review indicator details and environment context."
+)
+
+// ============================================================================
+// 5) OUTPUT
+// ============================================================================
+| project
+    Timestamp,
+    DeviceName,
+    CloudService,
+    ProcessName,
+    ProcessFolderPath = FolderPath,
+    ParentProcess = ParentName,
+    RemoteUrl,
+    RemoteHost,
+    SentBytes,
+    DataVolumeIndicator,
+    BaseRiskScore,
+    MISP_Confidence,
+    MISP_ConfidenceBucket,
+    MISP_RiskBoost,
+    CombinedRiskScore,
+    TIIndicatorId,
+    TIThreatType,
+    MISP_Tags,
+    MISP_Description,
+    HunterDirective,
+    MITRETechniques = dynamic(["T1071.001","T1567.002","T1027","T1036","T1573"]),
+    RuleName = "MISP-Enriched Multi-Cloud Storage Exfil (Confidence-Scored)"
+| order by CombinedRiskScore desc, Timestamp desc;
