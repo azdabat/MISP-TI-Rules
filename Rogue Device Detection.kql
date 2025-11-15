@@ -1,0 +1,69 @@
+// ============================================================================
+// Rogue Device Detection — MISP Enriched (Confidence Scored)
+// Author: Ala Dabat (Alstrum)
+// MITRE: T1584 (Compromise Infrastructure), T1105 (Ingress Tool Transfer)
+// ============================================================================
+
+let lookback = 30d;
+
+// Corporate naming
+let ApprovedNamingPattern = @"^ACME-(DC|SVC|SQL|WIN|LAP|ADMIN)-\d{2}$";
+
+// Core MDE dataset
+let Base =
+DeviceInfo
+| summarize arg_max(TimeGenerated, *) by DeviceId
+| project DeviceId, DeviceName, OnboardingState, DeviceType, OSPlatform;
+
+// MISP intel
+let MISP =
+ThreatIntelligenceIndicator
+| where SourceSystem == "MISP"
+| where ConfidenceScore >= 30   // ignore very low confidence
+| extend IOC = coalesce(DomainName, Indicator, Description, tostring(AdditionalInformation))
+| project IOC, IndicatorType, ConfidenceScore, Tags;
+
+// Join Base with observed telemetry to detect missing devices
+let Observed =
+DeviceNetworkEvents
+| project DeviceName, DeviceId, RemoteIP
+| union (DeviceProcessEvents | project DeviceName, DeviceId, RemoteIP = "")
+| where isnotempty(DeviceName)
+| distinct DeviceName, DeviceId, RemoteIP;
+
+// Match observed devices to MDE inventory
+Observed
+| join kind=leftouter Base on DeviceName
+| extend NameOk = DeviceName matches regex ApprovedNamingPattern
+| extend IsOnboarded = iff(OnboardingState == "Onboarded", 1, 0)
+| extend IsMissingInEDR = iff(isempty(DeviceId1), 1, 0)
+| join kind=leftouter MISP on $left.DeviceName == $right.IOC or $left.RemoteIP == $right.IOC
+| extend TI_ConfidenceBucket = case(
+    ConfidenceScore >= 80, "High",
+    ConfidenceScore >= 60, "Medium",
+    ConfidenceScore >= 30, "Low",
+    "None"
+)
+| extend TI_RiskBoost = case(
+    TI_ConfidenceBucket == "High", 4,
+    TI_ConfidenceBucket == "Medium", 2,
+    TI_ConfidenceBucket == "Low", 1,
+    0
+)
+| extend BaseRisk =
+    iif(IsMissingInEDR == 1, 5, 0) +
+    iif(NameOk == false, 4, 0) +
+    iif(IsOnboarded == 0, 3, 0)
+| extend CombinedRisk = minof(10, BaseRisk + TI_RiskBoost)
+| where CombinedRisk >= 4
+| extend HunterDirective = case(
+    CombinedRisk >= 9, "CRITICAL: Rogue device + MISP high-confidence IOC match. Isolate immediately.",
+    BaseRisk >= 8, "HIGH: Device missing in EDR and naming does not match corporate scheme.",
+    NameOk == false, "HIGH: Suspicious naming pattern. Investigate spoofing.",
+    IsOnboarded == 0, "MEDIUM: Device present but not onboarded.",
+    "Investigate device legitimacy."
+)
+| project DeviceName, DeviceId, NameOk, OnboardingState,
+          IsMissingInEDR, CombinedRisk, TI_ConfidenceBucket,
+          Tags, IOC, HunterDirective
+| order by CombinedRisk desc;
