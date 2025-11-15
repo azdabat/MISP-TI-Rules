@@ -1,5 +1,6 @@
 // Rogue Endpoint Detection (Naming/Onboarding + LDAP + LSASS)
 // Author: Ala Dabat
+// Specific to Supply-Chain / F5-Style Attacks
 let lookback = 30d;
 let approvedRegex = @"^ACME-(DC|SVC|SQL|WIN|LAP|ADMIN)-\d{2}$";
 
