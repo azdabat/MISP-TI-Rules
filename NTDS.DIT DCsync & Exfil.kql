@@ -1,0 +1,187 @@
+// ===========================================================================
+// NTDS.dit Replication / DCSync + ShadowCopy Exfil — L3 Native Detection Rule
+// Author: Ala Dabat (Alstrum) | Version: 2025-11
+// Category: credential-access
+// MITRE: T1003.006 (DCSync), T1003.003 (NTDS.dit), T1003 (Credential Dumping)
+// Purpose: Pure native (NO TI) L3 detection of replication abuse, krbtgt misuse,
+//          NTDS.dit access, shadow copy creation, and exfil patterns.
+// ===========================================================================
+
+// -------------------- Tunables --------------------
+let lookback = 14d;
+let corr_window = 20m;
+let min_confidence = 85;
+
+// Replication privileges only DCs should use
+let ReplicationRights = dynamic([
+    "DS-Replication-Get-Changes",
+    "DS-Replication-Get-Changes-All",
+    "DS-Replication-Get-Changes-In-Filtered-Set"
+]);
+
+// Suspicious NTDS / DCSync tools & LOLBINs
+let SuspiciousProcs = dynamic([
+    "mimikatz.exe","rubeus.exe","secretsdump.py","adexploit.exe","lsadump.exe",
+    "python.exe","powershell.exe","esentutl.exe","ntdsutil.exe","vssadmin.exe",
+    "wbadmin.exe"
+]);
+
+// Shadow copy / NTDS paths
+let NTDS_Paths = dynamic([
+    "\\ntds.dit","\\windows\\ntds","\\windows\\system32\\config\\",
+    "\\shadowcopy","\\system32\\ntds","\\temp","\\users\\public"
+]);
+
+// Shadow copy command patterns
+let ShadowCopyCmd =
+dynamic(["create shadow","create full","ntds","ntdsutil","VSS","shadow","wbadmin"]);
+
+// -------------------- Stage 1 — AD Directory Replication (4662) --------------------
+let ReplicationEvents =
+SecurityEvent
+| where TimeGenerated >= ago(lookback)
+| where EventID == 4662
+| where AccessMaskName has_any (ReplicationRights)
+| project
+    Timestamp = TimeGenerated,
+    DeviceName = Computer,
+    AccountName = SubjectUserName,
+    AccessMaskName,
+    ObjectName;
+
+// -------------------- Stage 2 — Kerberos KRBTGT anomalies (4768/4769) --------------------
+let KerberosEvents =
+SecurityEvent
+| where TimeGenerated >= ago(lookback)
+| where EventID in (4768,4769)
+| where ServiceName has_any ("krbtgt","KRBTGT")
+| project
+    Timestamp = TimeGenerated,
+    DeviceName = Computer,
+    AccountName,
+    ServiceName,
+    TicketOptions;
+
+// -------------------- Stage 3 — Suspicious NTDS / VSS process execution --------------------
+let ProcHits =
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| where FileName in (SuspiciousProcs)
+       or ProcessCommandLine has_any (ShadowCopyCmd)
+       or ProcessCommandLine has_any (NTDS_Paths)
+| project
+    Timestamp,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine;
+
+// -------------------- Stage 4 — NTDS.dit / shadowcopy file interaction --------------------
+let FileHits =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName has_any (NTDS_Paths)
+       or FolderPath has_any (NTDS_Paths)
+| project
+    Timestamp,
+    DeviceName,
+    AccountName = InitiatingProcessAccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FolderPath,
+    FileName;
+
+// -------------------- Stage 5 — RPC/LDAP DCSync network traffic --------------------
+let NetworkHits =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemotePort in (135,389,3268,3269)     // RPC/LDAP/Global Catalog
+| where InitiatingProcessFileName !in ("lsass.exe","winlogon.exe","services.exe") // non-DC behaviour
+| project
+    Timestamp,
+    DeviceName,
+    AccountName = InitiatingProcessAccountName,
+    RemoteIP,
+    RemotePort,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine;
+
+// -------------------- Stage 6 — Join and Correlation --------------------
+ReplicationEvents
+| join kind=leftouter KerberosEvents on DeviceName
+| join kind=leftouter ProcHits       on DeviceName
+| join kind=leftouter FileHits       on DeviceName
+| join kind=leftouter NetworkHits    on DeviceName
+| where
+    // ONLY correlate events within correlation window
+    (isnull(Timestamp1) or Timestamp1 between (Timestamp .. Timestamp + corr_window))
+    or (isnull(Timestamp2) or Timestamp2 between (Timestamp .. Timestamp + corr_window))
+    or (isnull(Timestamp3) or Timestamp3 between (Timestamp .. Timestamp + corr_window))
+    or (isnull(Timestamp4) or Timestamp4 between (Timestamp .. Timestamp + corr_window))
+
+// -------------------- Stage 7 — Behaviour scoring (Native L3) --------------------
+| extend
+    HasReplicationAbuse = iif(isnotempty(AccessMaskName), 1, 0),
+    HasKerberosAbuse    = iif(isnotempty(ServiceName), 1, 0),
+    HasProcAbuse        = iif(isnotempty(FileName1), 1, 0),
+    HasFileAbuse        = iif(isnotempty(FileName2), 1, 0),
+    HasNetworkAbuse     = iif(isnotempty(RemoteIP), 1, 0)
+
+| extend BaseScore = 70
+
+| extend ConfidenceScore =
+    BaseScore
+    + (HasReplicationAbuse * 15)      // 4662 on non-DC = immediate danger
+    + (HasKerberosAbuse * 10)         // krbtgt activity is rare & critical
+    + (HasProcAbuse * 10)             // shadow copy / ntdsutil / secretsdump
+    + (HasFileAbuse * 10)             // NTDS file access
+    + (HasNetworkAbuse * 8)           // RPC/LDAP replication from endpoint
+;
+
+// -------------------- Severity Mapping --------------------
+| extend Severity = case(
+    ConfidenceScore >= 95, "High",
+    ConfidenceScore >= 85, "Medium",
+    "Low"
+)
+
+| extend
+    MITRE_Tactics = "TA0006 (Credential Access)",
+    MITRE_Techniques = "T1003.006 (DCSync), T1003.003 (NTDS.dit), T1003 (Credential Dumping)";
+
+// -------------------- Hunter Directives --------------------
+| extend ThreatHunterDirectives = strcat(
+    "Severity=", Severity,
+    "; Host=", DeviceName,
+    "; Account=", AccountName,
+    "; Replication=", tostring(HasReplicationAbuse),
+    "; Kerberos=", tostring(HasKerberosAbuse),
+    "; NTDS_File=", tostring(HasFileAbuse),
+    "; ShadowCopy_Proc=", tostring(HasProcAbuse),
+    "; RecommendedNextSteps=",
+        case(
+            Severity == "High",
+                "Strong indication of DCSync / NTDS replication abuse. Immediately check if host is a Domain Controller. If not: ISOLATE HOST. Investigate process lineage, confirm replication privileges, review krbtgt events, and search for shadowcopy/NTDS artefacts.",
+            Severity == "Medium",
+                "Investigate host for misconfigured replication rights or lateral movement staging. Review process lineage and RPC/LDAP traffic.",
+            "Use as hunting lead. Validate whether backup systems or legitimate maintenance triggered replication events."
+        )
+)
+
+// -------------------- Final Projection --------------------
+| project
+    Timestamp,
+    DeviceName,
+    AccountName,
+    HasReplicationAbuse,
+    HasKerberosAbuse,
+    HasProcAbuse,
+    HasFileAbuse,
+    HasNetworkAbuse,
+    ConfidenceScore,
+    Severity,
+    MITRE_Tactics,
+    MITRE_Techniques,
+    ThreatHunterDirectives
+| where ConfidenceScore >= min_confidence
+| order by ConfidenceScore desc, Timestamp desc
