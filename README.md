@@ -269,7 +269,7 @@ In a full production deployment with 30–50 complementary rules, overall detect
 | SolarWinds | 🟩🟨⬜⬜⬜ (40%) | Port Hunt, Registry Persistence | Signed DLL bypass |
 | NotPetya | 🟩🟩🟩⬜⬜ (60%) | Registry, LSASS, SMB | No supply-chain view |
 | 3CX | 🟩🟨⬜⬜⬜ (35%) | Rogue Processes | AuthentiCode bypass |
-| NTT Data | 🟩🟨⬜⬜⬜ (40%) | OAuth, Rogue Devices | No tenant correlation |
+| NTT Data | 🟩🟨⬜⬜⬜ (40%) |  Rogue Devices | SMB Lateral Movement |
 | F5 | 🟨⬜⬜⬜⬜ (15%) | Driver Loads | No driver drift |
 
 ---
@@ -281,7 +281,7 @@ In a full production deployment with 30–50 complementary rules, overall detect
 | SolarWinds | 🟩🟩🟩🟨⬜ (75%) | DLL Drift + TI C2 | Signer/hash drift |
 | NotPetya | 🟩🟩🟩🟩⬜ (85%) | SMB Worming + Registry | MS17-010 TI |
 | 3CX | 🟩🟩🟩🟩⬜ (90%) | DLL Drift + Dormancy | Delayed loader |
-| NTT | 🟩🟩🟩🟩⬜ (90%) | OAuth + TI-IP | Cloud pivot |
+| NTT | 🟩🟩🟩🟩⬜ (90%) | SMB Lateral Movement | Possible C2
 | F5 | 🟩🟩🟩🟨⬜ (80%) | Driver Drift + ServiceDll | Adds C2 TI |
 
 ---
@@ -322,7 +322,7 @@ F5 Attack   +65%
 | 3CX         | ✔         | ▲        | ✔   | ✗     | ✔        | ✗     | 90%      |
 | NotPetya    | ▲         | ✔        | ✔   | ✗     | ▲        | ✗     | 85%      |
 | F5 UNC5221  | ▲         | ✔        | ✔   | ✔     | ✔        | ✔     | 80%      |
-| NTT Data    | ▲         | ▲        | ✔   | ✔     | ✔        | ✗     | 90%      |
+| NTT Data    | ▲         | ▲        | ✔   | ✗      | ✔        | ✗     | 90%      |
 | MOVEit      | ▲         | ▲        | ✗   | ✗     | ✔        | ✗     | 65%      |
 | XZ Backdoor | ✔         | ✗        | ✗   | ✗     | ✔        | ✗     | 45%      |
 
