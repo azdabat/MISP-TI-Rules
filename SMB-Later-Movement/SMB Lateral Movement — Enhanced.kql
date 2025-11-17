@@ -103,23 +103,21 @@ SmbNet
 // Author: Ala Dabat
 // ===================================================================
 
+// ===================================================================
+// SMB Lateral Movement — Critical Shares + CTI/MISP Enrichment
+// PsExec / WMI / SCExec / Admin$ / SYSVOL / NETLOGON
+// Author: Ala Dabat
+// ===================================================================
+
 // -------------------- Tunables --------------------
-let lookback = 7d;
+let lookback = 3d;
 let corr_window = 15m;
 let propagation_threshold = 3;
 let procSet = dynamic(["psexec.exe","wmic.exe","powershell.exe","cmd.exe","sc.exe"]);
+let HighRiskShares = dynamic(["ADMIN$","C$","IPC$","PRINT$","SYSVOL","NETLOGON"]);
+let SuspiciousExt = dynamic([".exe",".dll",".sys",".ps1",".vbs",".js",".jse",".bat",".cmd",".hta"]);
 
-// High-risk shares attackers actually use
-let HighRiskShares = dynamic([
-    "ADMIN$",       // PsExec staging
-    "C$",           // File staging + service drop
-    "IPC$",         // WMI/DCOM lateral exec
-    "PRINT$",       // DLL drop → print driver load
-    "SYSVOL",       // GPO and domain script tampering
-    "NETLOGON"      // Domain logon script injection
-]);
-
-// -------------------- SMB connection stage --------------------
+// -------------------- SMB Network Connections --------------------
 let SmbNet =
 DeviceNetworkEvents
 | where Timestamp >= ago(lookback)
@@ -127,20 +125,22 @@ DeviceNetworkEvents
 | where InitiatingProcessFileName in (procSet)
 | extend SmbProc = InitiatingProcessFileName,
          SmbCmd  = InitiatingProcessCommandLine
-| project SmbTime=Timestamp, DeviceId, DeviceName, RemoteIP, SmbProc, SmbCmd;
+| project SmbTime = Timestamp, DeviceId, DeviceName, RemoteIP, SmbProc, SmbCmd;
 
-// -------------------- High-risk share writes --------------------
+// -------------------- High-Risk Share Writes --------------------
 let ShareWrites =
 DeviceFileEvents
 | where Timestamp >= ago(lookback)
 | where FolderPath startswith @"\\"
-| extend ShareName = tostring(split(FolderPath,"\\")[3])
+| extend Host = tostring(split(FolderPath,"\\")[2]),
+         ShareName = tostring(split(FolderPath,"\\")[3]),
+         FileExt = tostring(tolower(substring(FileName, strlen(FileName) - 4, 4)))
 | where ShareName in~ (HighRiskShares)
-| extend TargetHost = tostring(split(FolderPath,"\\")[2])
-| project FileTime=Timestamp, DeviceId, DeviceName, TargetHost,
-          ShareName, FolderPath, FileName, SHA256, InitiatingProcessFileName;
+| where FileExt in~ (SuspiciousExt)
+| project FileTime = Timestamp, DeviceId, DeviceName, Host, ShareName, FolderPath,
+          FileName, FileExt, SHA256, WriteProc = InitiatingProcessFileName;
 
-// -------------------- Service creation / remote execution --------------------
+// -------------------- Remote Service Creation / PsExec / WMI --------------------
 let ServiceExec =
 union
 (
@@ -148,94 +148,109 @@ union
  | where Timestamp >= ago(lookback)
  | where FileName in ("psexesvc.exe","svchost.exe","services.exe")
     or ProcessCommandLine has_any ("psexec","\\ADMIN$","sc.exe create","sc.exe start")
- | project SvcTime=Timestamp, SvcHost=DeviceName, SvcFileName=FileName,
-           SvcCmd=ProcessCommandLine, Initiator=InitiatingProcessFileName
+ | project SvcTime = Timestamp, SvcHost = DeviceName,
+           SvcFileName = FileName, SvcCmd = ProcessCommandLine,
+           Initiator = InitiatingProcessFileName
 ),
 (
  SecurityEvent
+ | where TimeGenerated >= ago(lookback)
  | where EventID == 7045
- | extend SvcTime=TimeGenerated, SvcHost=Computer, SvcCmd=EventData,
-           SvcFileName="ServiceCreation", Initiator="System"
+ | extend SvcTime = TimeGenerated,
+           SvcHost = Computer,
+           SvcFileName = "ServiceCreation",
+           SvcCmd = tostring(EventData),
+           Initiator = "System"
  | project SvcTime, SvcHost, SvcFileName, SvcCmd, Initiator
 );
 
-// -------------------- Authentication correlation --------------------
+// -------------------- Kerberos/NTLM Authentication --------------------
 let AuthLogons =
 SigninLogs
 | where TimeGenerated >= ago(lookback)
 | where ResultType == 0 and AuthenticationProtocol in ("Kerberos","NTLM")
-| project AuthTime=TimeGenerated, AccountUPN=UserPrincipalName, IPAddress;
+| project AuthTime = TimeGenerated, AccountUPN = UserPrincipalName, IPAddress;
 
-// -------------------- DNS enrichment --------------------
+// -------------------- DNS Resolution --------------------
 let DnsMap =
 DnsEvents
 | where Timestamp >= ago(lookback)
-| project DnsTime=Timestamp, DeviceName, RemoteIP=IPAddress, ResolvedHost=Name;
+| project DNS_Time = Timestamp, DeviceName, RemoteIP = IPAddress, ResolvedHost = Name;
 
-// -------------------- TI enrichment --------------------
+// -------------------- MISP / TI Enrichment --------------------
 let TiLookup =
 ThreatIntelligenceIndicator
-| where IndicatorType in ("IPv4","IP","DomainName","HostName")
-| project TI_Indicator=Indicator, IntelConfidence=ConfidenceScore,
+| where IndicatorType in ("IPv4","IP","DomainName","HostName","FileHash")
+| project TI_Indicator = Indicator,
+          IntelConfidence = toint(ConfidenceScore),
           TlpLevel, ThreatType, Tags;
 
-// -------------------- Correlation --------------------
+// -------------------- Correlation Engine --------------------
 let Corr =
 SmbNet
 | join kind=leftouter (DnsMap) on RemoteIP
 | extend TargetHost = coalesce(ResolvedHost, RemoteIP)
 | join kind=innerunique (
       ShareWrites
-      | project FileTime, TargetHost, SrcDeviceName=DeviceName,
-                ShareName, FolderPath, FileName, SHA256
-  ) on TargetHost
+      | project FileTime, Host, DeviceName, ShareName, FolderPath, FileName, FileExt, SHA256
+  ) on $left.TargetHost == $right.Host
 | where FileTime between (SmbTime .. SmbTime + corr_window)
 | join kind=innerunique (
       ServiceExec
       | project SvcTime, SvcHost, SvcFileName, SvcCmd, Initiator
-  ) on $left.TargetHost == $right.SvcHost
+  ) on $left.Host == $right.SvcHost
 | where SvcTime between (FileTime .. FileTime + corr_window)
-| join kind=leftouter (AuthLogons)
-      on $left.DeviceName == $right.AccountUPN or $left.RemoteIP == $right.IPAddress
+| join kind=leftouter (AuthLogons) on $left.RemoteIP == $right.IPAddress
 | join kind=leftouter (TiLookup)
-      on $left.RemoteIP == $right.TI_Indicator or $left.TargetHost == $right.TI_Indicator
-| extend IntelConfidence = toint(coalesce(IntelConfidence,50))
+      on $left.RemoteIP == $right.TI_Indicator
+       or $left.TargetHost == $right.TI_Indicator
+       or $left.SHA256 == $right.TI_Indicator
+| extend IntelConfidence = toint(coalesce(IntelConfidence, 40))
 | extend HostPropagationCount = dcount(TargetHost) over (DeviceName)
-| extend DetectionSignal=90, KillChainRelevance=85, TemporalScore=100
+
+// -------------------- Risk Model --------------------
+| extend DetectionSignal = 90,
+         KillChainRelevance = 85,
+         TemporalScore = 100
 | extend FinalScore = toint(round(
-        DetectionSignal*0.4 +
-        IntelConfidence*0.2 +
-        KillChainRelevance*0.2 +
-        TemporalScore*0.1 +
-        (HostPropagationCount*3),0))
+         (DetectionSignal * 0.35) +
+         (IntelConfidence * 0.25) +
+         (KillChainRelevance * 0.20) +
+         (TemporalScore * 0.10) +
+         (HostPropagationCount * 5), 0))
 | extend FinalRisk = case(
-        FinalScore >= 90, "CRITICAL",
-        FinalScore >= 70, "HIGH",
-        "MEDIUM")
-| extend MITRE_Tactics="TA0008 Lateral Movement; TA0002 Execution; TA0006 Credential Access",
-         MITRE_Techniques="T1021.002 SMB/Admin Shares; T1569.002 Service Execution; T1078 Valid Accounts",
+         FinalScore >= 90, "CRITICAL",
+         FinalScore >= 70, "HIGH",
+         "MEDIUM")
+
+// -------------------- Analyst Guidance --------------------
+| extend MITRE_Tactics = "TA0008 Lateral Movement; TA0002 Execution; TA0006 Credential Access",
+         MITRE_Techniques = "T1021.002 SMB/Admin Shares; T1569.002 Service Execution; T1078 Valid Accounts",
          ThreatHunterDirective = case(
             HostPropagationCount >= propagation_threshold,
-                "IMMEDIATE: Multi-host pivot detected; isolate source, block SMB, inspect dropped payloads, review Kerberos/NTLM activity.",
+              "IMMEDIATE: Worm-like propagation via high-risk shares; isolate source host; block SMB; capture binaries.",
             FinalRisk == "CRITICAL",
-                "IMMEDIATE: Validate remote service creation; suspend account; isolate host.",
+              "IMMEDIATE: Confirm PsExec/WMI remote execution; suspend account; isolate hosts; extract service payload.",
             FinalRisk == "HIGH",
-                "URGENT: Confirm legitimacy of remote file write and service start.",
-            "INVESTIGATE: Baseline admin behaviour for share writes and remote service usage."
+              "URGENT: Validate admin activity; correlate with identity logs; pivot into ShareWrites → File metadata.",
+            "INVESTIGATE: Baseline remote admin usage; validate share activity; review file provenance."
          )
 | extend Evidence = pack(
-        "SMBProc",SmbProc,
-        "SMBCmd",SmbCmd,
-        "ShareName",ShareName,
-        "TargetHost",TargetHost,
-        "AdminShareFile",FileName,
-        "SvcFile",SvcFileName,
-        "SvcCmd",SvcCmd,
-        "PropagationCount",HostPropagationCount)
+         "SMBProc", SmbProc,
+         "SMBCmd", SmbCmd,
+         "ShareName", ShareName,
+         "TargetHost", TargetHost,
+         "ShareFile", FileName,
+         "SvcFile", SvcFileName,
+         "SvcCmd", SvcCmd,
+         "SHA256", SHA256,
+         "PropagationCount", HostPropagationCount,
+         "TI_Indicator", TI_Indicator,
+         "TI_Confidence", IntelConfidence
+)
 | project SmbTime, DeviceName, RemoteIP, TargetHost, ShareName,
-          FolderPath, FileName, SvcFileName, SvcCmd,
+          FolderPath, FileName, FileExt, SvcFileName, SvcCmd,
           AccountUPN, IntelConfidence, HostPropagationCount,
           FinalScore, FinalRisk, MITRE_Tactics, MITRE_Techniques,
           ThreatHunterDirective, Evidence
 | order by FinalScore desc, SmbTime desc;
-
