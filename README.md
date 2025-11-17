@@ -390,6 +390,11 @@ F5 Attack   +65%
 |------|------|
 | TOR Detection | https://github.com/azdabat/MISP-TI-Rules/tree/main/TOR-Exit-Node-Detection |
 
+### Suspiciouis Port Detection
+| Rule | Link |
+|------|------|
+| Suspicious C2 Port Detection | https://github.com/azdabat/MISP-TI-Rules/blob/main/03_Suspicious_Ports_with_External_CSV.kql
+
 ---
 
 # 9. Additional Directories
