@@ -1,3 +1,4 @@
+
 # MISP-Integrated Threat Hunting & Supply-Chain Detection Rules  
 ### Author: **Ala Dabat — Senior SOC, Threat Intelligence & Detection Engineer**
 
@@ -16,7 +17,7 @@
   - [SolarWinds (SUNBURST)](#solarwinds-sunburst)
   - [NotPetya (M.E.Doc Supply Chain)](#notpetya-medoc-supply-chain)
   - [F5 / UNC5221 (2025)](#f5--unc5221-2025)
-  - [Vectorform (2022–2025)](#ntt-data--vectorform-20222025)
+  - [Vectorform (2022–2025)](#--vectorform-20222025)
 - [3. Detection Coverage Matrices](#3-detection-coverage-matrices)
   - [A. Native Detection Strength (Baseline Only)](#a-native-detection-strength-baseline-only)
   - [B. CTI-Integrated Detection Strength (Your Advanced Rule)](#b-cti-integrated-detection-strength-your-advanced-rule)
@@ -281,7 +282,7 @@ In a full production deployment with 30–50 complementary rules, overall detect
 | SolarWinds | 🟩🟩🟩🟨⬜ (75%) | DLL Drift + TI C2 | Signer/hash drift |
 | NotPetya | 🟩🟩🟩🟩⬜ (85%) | SMB Worming + Registry | MS17-010 TI |
 | 3CX | 🟩🟩🟩🟩⬜ (90%) | DLL Drift + Dormancy | Delayed loader |
-| NTT | 🟩🟩🟩🟩⬜ (90%) | SMB Lateral Movement | Possible C2
+| Vectorform | 🟩🟩🟩🟩⬜ (90%) | SMB Lateral Movement | Possible C2
 | F5 | 🟩🟩🟩🟨⬜ (80%) | Driver Drift + ServiceDll | Adds C2 TI |
 
 ---
