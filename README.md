@@ -16,7 +16,7 @@
   - [SolarWinds (SUNBURST)](#solarwinds-sunburst)
   - [NotPetya (M.E.Doc Supply Chain)](#notpetya-medoc-supply-chain)
   - [F5 / UNC5221 (2025)](#f5--unc5221-2025)
-  - [NTT Data / Vectorform (2022–2025)](#ntt-data--vectorform-20222025)
+  - [Vectorform (2022–2025)](#ntt-data--vectorform-20222025)
 - [3. Detection Coverage Matrices](#3-detection-coverage-matrices)
   - [A. Native Detection Strength (Baseline Only)](#a-native-detection-strength-baseline-only)
   - [B. CTI-Integrated Detection Strength (Your Advanced Rule)](#b-cti-integrated-detection-strength-your-advanced-rule)
@@ -44,7 +44,7 @@
 
 # Overview
 
-This repository delivers **production-ready KQL threat-hunting rules** designed for **Microsoft Sentinel** and **Defender for Endpoint**, integrating **MISP Threat Intelligence** and **OpenCTI enrichment** to achieve high-fidelity detection of complex threats — from **supply-chain compromises** (SolarWinds, 3CX, NotPetya, NTT Data) to **OAuth consent abuse** and **driver/DLL sideloading persistence**.
+This repository delivers **production-ready KQL threat-hunting rules** designed for **Microsoft Sentinel** and **Defender for Endpoint**, integrating **MISP Threat Intelligence** and **OpenCTI enrichment** to achieve high-fidelity detection of complex threats — from **supply-chain compromises** (SolarWinds, 3CX, NotPetya, Vectorform) to **OAuth consent abuse** and **driver/DLL sideloading persistence**.
 
 These rules combine:
 
@@ -238,13 +238,13 @@ In a full production deployment with 30–50 complementary rules, overall detect
 
 ---
 
-## NTT Data / Vectorform (2022–2025)
+##  Vectorform (2022–2025)
 ```
 [1] Credential Exposure
      GitHub secrets, AWS keys, PAT tokens
 
 [2] Initial Access
-     Fake domain: ntt-orders[.]com
+     Fake domain: xyz-orders[.]com
 
 [3] Cloud Data Exfiltration
      Customer metadata, order systems
@@ -269,7 +269,7 @@ In a full production deployment with 30–50 complementary rules, overall detect
 | SolarWinds | 🟩🟨⬜⬜⬜ (40%) | Port Hunt, Registry Persistence | Signed DLL bypass |
 | NotPetya | 🟩🟩🟩⬜⬜ (60%) | Registry, LSASS, SMB | No supply-chain view |
 | 3CX | 🟩🟨⬜⬜⬜ (35%) | Rogue Processes | AuthentiCode bypass |
-| NTT Data | 🟩🟨⬜⬜⬜ (40%) |  Rogue Devices | SMB Lateral Movement |
+| Vectorform | 🟩🟨⬜⬜⬜ (40%) |  Rogue Devices | SMB Lateral Movement |
 | F5 | 🟨⬜⬜⬜⬜ (15%) | Driver Loads | No driver drift |
 
 ---
@@ -292,7 +292,7 @@ In a full production deployment with 30–50 complementary rules, overall detect
 SolarWinds  +35%
 NotPetya    +25%
 3CX         +55%
-NTT Data    +50%
+Vectorform   +50%
 F5 Attack   +65%
 ```
 
@@ -322,7 +322,7 @@ F5 Attack   +65%
 | 3CX         | ✔         | ▲        | ✔   | ✗     | ✔        | ✗     | 90%      |
 | NotPetya    | ▲         | ✔        | ✔   | ✗     | ▲        | ✗     | 85%      |
 | F5 UNC5221  | ▲         | ✔        | ✔   | ✔     | ✔        | ✔     | 80%      |
-| NTT Data    | ▲         | ▲        | ✔   | ✗      | ▲        | ✗     | 90%      |
+| Vectorform  | ▲         | ▲        | ✔   | ✗      | ▲        | ✗     | 90%      |
 | MOVEit      | ▲         | ▲        | ✗   | ✗     | ✔        | ✗     | 65%      |
 | XZ Backdoor | ✔         | ✗        | ✗   | ✗     | ✔        | ✗     | 45%      |
 
