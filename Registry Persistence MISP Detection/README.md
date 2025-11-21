@@ -1,196 +1,189 @@
-#  MISP-Enriched Registry Persistence Detection  
-**Platform:** MDE / Microsoft Sentinel  
+# Registry Persistence & CTI-Enriched Detection Pack  
+**Platform:** Microsoft Defender for Endpoint / Sentinel  
 **Author:** Ala Dabat  
-**Type:** Adaptive, CTI-aware Detection (Registry Persistence + MISP Intelligence)  
-**Supports:** Supply-Chain Attacks, APT Intrusions, Red-Team Tradecraft  
-**Techniques:** TA0003 • TA0002 • TA0005  
+**Type:** Adaptive Detection + Native Hunts + MISP Intelligence  
+**Scope:** Post-Exploitation, Supply-Chain Intrusions, APT Persistence  
+**Coverage:** Windows Registry Persistence • COM Hijack • IFEO • LSA/SSP • AppInit_DLLs • Services  
+**MITRE:** TA0003 (Persistence) • TA0002 (Execution) • TA0005 (Defense Evasion)
 
 ---
 
-##  What This Detection Is
+## Overview
 
-This analytic is an *adaptive*, *weighted*, *threat-intelligence-enriched* registry persistence detector, designed for:
+This pack provides **high-fidelity, low-noise detection analytics** for registry-based persistence and configuration abuse.  
+It combines:
 
-- **Supply-chain malware** installing post-compromise persistence  
-- **DLL & driver loader families** using Run/Services/IFEO keys  
-- **APT “living registry” implants** (COM/LSA, AppInit_DLLs)  
-- **Malware droppers** which modify autorun keys  
-- **Backdoors leaving no file on disk** but storing commands/config in registry  
+- **Core behavioural signals** (encoded commands, LOLBins, network indicators)  
+- **Registry-based foothold vectors** used by APT groups and malware loaders  
+- **Publisher trust checks**, SHA256 rarity, process lineage, user path analysis  
+- Optional **MISP intelligence integration** (hash/domain/filename/campaign tags)  
+- Weighted final risk scoring  
+- **Auto-generated hunter directives** to drive investigation flow
 
-It uses:
-
-- Behavioural signals (**encoded commands, LOLBins, network IOCs**)  
-- **MISP indicators** (domains, hashes, filenames, kill-chain tags)  
-- Host-based rarity + publisher trust  
-- **Weighted final risk scoring**
-
-This creates a **CTI fusion detection** that responds dynamically to new MISP data.
+These detections are engineered for real attacker behaviour, not generic telemetry.
 
 ---
 
-#  What This Rule Detects (High Fidelity)
-
-| Detection Category | Supported | Explanation |
-|--------------------|----------:|-------------|
-| Run / RunOnce persistence | 🟩 Yes | Common post-infection autoruns |
-| Winlogon Shell/Userinit hijacks | 🟩 Yes | Core foothold mechanisms |
-| AppInit_DLLs (global DLL injection) | 🟩 Yes | Malware DLLs loaded into all GUI processes |
-| Services persistence | 🟩 Yes | Modified or malicious Windows services |
-| IFEO injection | 🟩 Yes | Redirecting legitimate EXEs to malware |
-| COM Hijacking (CLSID/InprocServer32) | 🟩 Yes | Used by APT41, GALLIUM, UNC groups |
-| LSA/SSP registration | 🟩 Yes | Credential theft implants |
-| User-writable payload paths | 🟩 Yes | Staged loaders under `AppData`, `ProgramData`, `Temp` |
-| Implants referencing URLs/IPs/domains | 🟩 Yes | Pull C2 config from registry |
-| Rare unsigned persistence binaries | 🟩 Yes | Uses SHA256 prevalence mapping |
-| Known malicious IoCs from MISP | 🟩 Yes | Automatic severity uplift |
-| Supply-chain persistence after a trojanised update | 🟩 Yes | When update drops persistence keys |
+# MISP-Enriched Registry Persistence Detection  
+**Mode:** CTI Fusion + Behavioural Analysis  
+**Purpose:** Identify registry persistence created by loaders, droppers, implants, supply-chain malware, and APT infrastructure.
 
 ---
 
-#  **What It Would Catch in Real Supply-Chain Attacks**
+## What This Detection Covers
 
-## ✔ 3CX Supply Chain (2023)
-Payload: **DLL loader-side persistence** using Run keys + sideloaded DLL communication.
-
-| Sub-attack | Detected? | Why |
-|------------|----------:|-----|
-| DLL loader written to `%AppData%` | 🟩 Yes | User-writable path + SuspFileRef |
-| Run key for persistence | 🟩 Yes | Core Run key coverage |
-| Config URLs in registry | 🟩 Yes | Network IOC + regex (domain/IP) |
-| Sideloaded legitimate signed DLL | 🟥 No | No registry modification in that stage |
-| Dormant driver drop | 🟧 Partial | Only if registry is used to store the loader path |
-
-**Detection Strength:** Strong for *post-load* persistence stage.
-
----
-
-## ✔ SolarWinds SUNBURST (2020)
-Payload: Registry-based covert C2 settings + scheduled persistence.
-
-| Sub-attack | Detected? | Why |
-|------------|----------:|-----|
-| C2 domain encoded in registry | 🟩 Yes | Base64 + domain regex |
-| Modified services | 🟩 Yes | `HKLM\SYSTEM\CurrentControlSet\Services` |
-| DLL preloading w/o registry changes | 🟥 No | Requires your DLL sideloading rule |
-| Native Orion service loads malicious DLL | 🟥 No | Not registry-related |
-
-**Detection Strength:** Strong for *registry-based C2 + persistence*, not for loader stage.
+| Category | Coverage | Notes |
+|---------|---------:|-------|
+| Run / RunOnce keys | 🟩 | Classic autoruns used by loaders and commodity malware |
+| Winlogon Shell / Userinit hijack | 🟩 | Core foothold persistence |
+| AppInit_DLLs | 🟩 | Global DLL injection (TrickBot, PlugX, QakBot) |
+| Services persistence | 🟩 | Modified ImagePath values |
+| IFEO debugger hijack | 🟩 | Redirects executables to malicious loaders |
+| COM Hijacking (CLSID/InprocServer32) | 🟩 | High-value APT persistence |
+| LSA/SSP credential modules | 🟩 | Credential theft with long-term foothold |
+| User-writable EXE/DLL paths | 🟩 | AppData/ProgramData/Temp loaders |
+| Registry-stored URLs/IP/C2 configs | 🟩 | Pulling commands/config from registry |
+| Rare unsigned persistence binaries | 🟩 | Prevalence scoring |
+| MISP Indicators (domains, SHA256, tags) | 🟩 | Severity uplift + context |
+| Supply-chain persistence stages | 🟩 | Registry-based foothold post-install |
 
 ---
 
-## ✔ NotPetya / M.E.Doc (2017)
-Payload: Uses **services persistence**, scheduled tasks, wiper routines.
+# Real-World Attack Coverage
 
-| Sub-attack | Detected? | Why |
-|------------|----------:|-----|
-| Modified services | 🟩 Yes | Services key monitored |
-| Run key for lateral movement tooling | 🟩 Yes | Catches encoded PowerShell |
-| Fileless PS commands embedded in registry | 🟩 Yes | Base64 / LOLBin detection |
-| SMB lateral movement (PSEXEC) | 🟥 No | Network-level, separate rule |
-| Wiper DLL components | 🟥 No | Not registry-persistent |
+## 3CX Supply Chain (2023)
 
----
-
-## ✔ NTT Data Attack (your 2025 simulation)
-Payload: multi-stage loader → persistence via IFEO + COM hijack.
-
-| Sub-attack | Detected? | Why |
-|------------|----------:|-----|
-| IFEO debugger hijack | 🟩 Yes | Explicit coverage |
-| COM hijack loader | 🟩 Yes | CLSID + InProcServer32 detection |
-| Rare unsigned binary dropped | 🟩 Yes | Prevalence scoring |
-| Hidden persistence value containing URL | 🟩 Yes | URL + Base64 detection |
-| Driver drop (if no registry key used) | 🟥 No | Use Driver Hunt rule |
+| Component | Detected | Reason |
+|----------|---------:|--------|
+| Run key persistence | 🟩 | Autorun monitored |
+| Loader DLL path in AppData | 🟩 | User-writable + suspicious file |
+| Registry-stored config URLs | 🟩 | URL + domain regex |
+| Sideloading stage | 🟥 | No registry modification at that stage |
 
 ---
 
-## ✔ F5 Supply-Chain / Appliance Pivot
-Payload: attacker pivots from compromised appliance → Windows estate.
+## SolarWinds SUNBURST
 
-| Sub-attack | Detected? | Why |
-|------------|----------:|-----|
-| Dropper establishes Run key | 🟩 Yes | Registry Run coverage |
-| Persistence stored in COM hijack | 🟩 Yes | COM/CLSID logic |
-| User-writable loader paths | 🟩 Yes | UserWritableRx |
-| Credential-harvesting SSP DLL | 🟩 Yes | LSA keys |
-| Appliance-side RCE leading to no registry changes | 🟥 No | Out of scope |
+| Component | Detected | Reason |
+|----------|---------:|--------|
+| Registry-stored obfuscated C2 | 🟩 | Base64 + URL regex |
+| Service modifications | 🟩 | Services key coverage |
+| DLL preload | 🟥 | Covered by DLL sideloading rule |
 
 ---
 
-# What This Rule Cannot Detect (By Design)
+## NotPetya / M.E.Doc
 
-| Miss | Reason |
+| Component | Detected | Reason |
+|----------|---------:|--------|
+| Services-based persistence | 🟩 | Monitored key |
+| Run key tooling (PowerShell) | 🟩 | Encoded commands detected |
+| SMB lateral movement stage | 🟥 | Separate detection path |
+
+---
+
+## NTT Data Style Intrusion (2025 Simulation)
+
+| Component | Detected | Reason |
+|----------|---------:|--------|
+| IFEO debugger override | 🟩 | Explicit path check |
+| COM hijacking | 🟩 | CLSID/InProcServer32 analysis |
+| Unsigned rare DLL/EXE | 🟩 | Prevalence scoring |
+| Registry-hosted loader instructions | 🟩 | URL/Base64 patterns |
+| Driver-stage persistence | 🟥 | Covered by driver hunt |
+
+---
+
+## F5 Appliance → Windows Pivot
+
+| Component | Detected | Reason |
+|----------|---------:|--------|
+| Registry foothold dropped by pivot | 🟩 | Run/Policy keys |
+| COM hijack persistence | 🟩 | CLSID coverage |
+| SSP credential modules | 🟩 | LSA registry coverage |
+| Appliance-only side | 🟥 | No registry writes |
+
+---
+
+# Known Gaps (By Design)
+
+| Gap | Reason |
 |------|--------|
-| Pure DLL sideloading | No registry writes |
-| Kernel-mode persistence | Needs driver telemetry |
-| GPO/SYSVOL registry.pol persistence | Not endpoint-written |
-| WMI Event Consumers | Not registry-based |
-| Startup folder persistence | File-based, not registry |
-| Agentless Linux/Appliance implants | Windows-only scope |
+| DLL sideloading | Not registry-based |
+| Kernel-driver persistence | Requires kernel telemetry |
+| SYSVOL/GPO-based persistence | Not endpoint-written |
+| WMI Event Consumers | Not registry keys |
+| Startup folder persistence | File-based |
+| Linux/appliance persistence | Not Windows registry |
 
-Pair it with your **DLL Sideloading**, **Driver Hunt**, **OAuth Abuse**, **Port Hunt**, **NTDS/Directory Dump** rules.
+Pair this with:
+
+- DLL Sideloading Hunt  
+- BYOVD / Malicious Driver Hunt  
+- OAuth Abuse Detection  
+- Browser Extension Hunt  
+- NTDS & Directory Extraction Hunt  
+- SMB Lateral Movement Hunt  
+- Suspicious Ports / C2 Jitter Hunts
 
 ---
 
-# 🧬 MISP Integration — How It Enhances Detection
+# MISP Integration
 
-The rule joins against:
+Uses:
 
-```
 ThreatIntelligenceIndicator
-    Indicator (SHA256/file/domain)
-    ConfidenceScore
-    ThreatType
-    Tags
-    TLP
-```
+Indicator // SHA256, domain, IP, filename
+ConfidenceScore // Weighted into FinalScore
+ThreatType
+Tags // APT/campaign/TTP context
+TLP
 
-MISP fields influence:
-
-| MISP Attribute | Impact |
-|----------------|--------|
-| `ConfidenceScore` | Weighted into final risk scoring |
-| `Tags` | Kill-chain relevance (e.g., `delivery`, `installation`) |
-| `Indicator` | Hash/domain match instantly boosts severity |
-| `TLP` | For sighting/reporting automation |
-
-This makes the rule **self-tuning** as new MISP data lands.
-
----
-
-# 🎛 Final Risk Score Formula (Readable)
-
-```
-FinalScore =
-    (DetectionSignal * 0.4)
-  + (IntelConfidence * 0.3)
-  + (KillChainRelevance * 0.2)
-  + (TemporalScore * 0.1)
-```
-
-Where:
-
-- **DetectionSignal** = behavioural evidence  
-- **IntelConfidence** = MISP confidence (fallback 50)  
-- **KillChainRelevance = 80** (weighted for persistence/post-compromise)  
-- **TemporalScore = 100** (favours fresh IOCs)  
-
-Risk levels:
+Risk Levels:
 
 | Score | Level |
 |-------|--------|
-| ≥ 90 | 🔥 CRITICAL |
+| ≥ 90 | CRITICAL |
 | ≥ 70 | HIGH |
 | < 70 | MEDIUM |
 
 ---
 
-# 🕵️ Threat Hunter Directive (Auto-Generated Per Row)
+# Threat Hunter Directive (Auto-Generated)
 
 Examples:
 
-- “IMMEDIATE: isolate host, pull memory, block indicators, add MISP sighting.”  
-- “URGENT: verify autorun legitimacy, confirm signer, analyze parent process.”  
-- “INVESTIGATE: validate value, check recurrence, correlate user/machine.”  
-----
+- **CRITICAL:** isolate host → memory acquisition → IOC block → MISP sighting  
+- **HIGH:** validate autorun → verify signer → pivot to file/network  
+- **MEDIUM:** review value → compare baseline → monitor recurrence  
 
+Directives are context-aware and vary per detection.
+
+---
+
+# Rule Location
+
+The full rule can be found under:
+~~~
+/Registry-Persistence
+├── MISP-Enriched-Registry-Persistence.kql
+└── Registry-Persistence-Native.kql
+~~~
+
+Native version removes all CTI references and uses pure behavioural logic.
+
+---
+
+# For Expansion
+
+If required, the README can include:
+
+- Entire CTI + Native detection suite  
+- MITRE heatmap  
+- Rule crosslinks  
+- Architecture diagram  
+- Threat hunting workflow  
+- Data schema notes  
+- CPU usage notes per rule
+
+Just specify what you want added next.
