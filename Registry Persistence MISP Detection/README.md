@@ -7,9 +7,10 @@
 **MITRE:** TA0003 (Persistence) • TA0002 (Execution) • TA0005 (Defense Evasion)
 <kbd>
 </kbd>
-**NOTE: Rule created over months of alert detections and IR cases**
 
 ---
+
+**NOTE: Rule created over months of alert detections and IR cases**
 
 ## Overview
 
