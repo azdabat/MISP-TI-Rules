@@ -1,0 +1,106 @@
+// ============================================================================
+// Rule Name: MISP-Enriched Malicious Browser Extension Campaign Hunt (Low CPU)
+// Author: Ala Dabat
+// Purpose:
+//   Low-CPU hunt surfacing endpoints with installed browser extensions whose
+//   IDs match MISP indicators tagged as malicious/suspicious campaigns.
+// Data Sources: DeviceFileEvents, DeviceRegistryEvents, ThreatIntelligenceIndicator, DeviceInfo
+// MITRE: TA0003 Persistence, TA0005 Defense Evasion, TA0009 Collection
+// CPU Notes:
+//   - Lookback: 7d
+//   - No heavy rarity calculations.
+//   - Single TI join and summarize.
+// ============================================================================
+
+let lookback = 7d;
+
+// MISP extension IDs
+let MISP_MaliciousExtensions =
+ThreatIntelligenceIndicator
+| where Active == true
+| where IndicatorType == "browser-extension-id"
+| extend ExtensionID = tolower(IndicatorValue)
+| where ExtensionID matches regex @"^[a-z]{32}$"
+| project ExtensionID, ThreatType, Description, Tags, ConfidenceScore;
+
+// Extension folder/manifest artifacts
+let ExtensionArtifacts =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FolderPath has @"\User Data\" and FolderPath has @"\Extensions\"
+| where ActionType in ("FileCreated","FileModified","FolderCreated")
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\", 1, FolderPath))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName, ExtensionID,
+          FileName, FolderPath, SHA256,
+          InstallingProcessName    = InitiatingProcessFileName,
+          InstallingProcessCommand = InitiatingProcessCommandLine;
+
+// Policy-based force install for Chrome/Edge
+let PolicyArtifacts =
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where RegistryKey has "ExtensionInstallForcelist"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})", 1, tostring(RegistryValueData)))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName, ExtensionID,
+          RegistryKey, RegistryValueData,
+          InstallingProcessName    = InitiatingProcessFileName,
+          InstallingProcessCommand = InitiatingProcessCommandLine;
+
+// Union and join TI
+union ExtensionArtifacts, PolicyArtifacts
+| join kind=inner MISP_MaliciousExtensions on ExtensionID
+| summarize
+    FirstSeen         = min(Timestamp),
+    LastSeen          = max(Timestamp),
+    EventCount        = count(),
+    ExampleFileName   = any(FileName),
+    ExampleFolderPath = any(FolderPath),
+    ExampleRegistryKey   = any(RegistryKey),
+    ExampleRegistryValue = any(RegistryValueData),
+    SampleInstaller      = any(InstallingProcessName),
+    SampleInstallCommand = any(InstallingProcessCommand),
+    AnyThreatType     = any(ThreatType),
+    AnyDescription    = any(Description),
+    AnyTags           = any(Tags),
+    AvgTIConfidence   = avg(ConfidenceScore)
+  by DeviceId, DeviceName, ExtensionID
+// Device context
+| join kind=leftouter (
+    DeviceInfo
+    | project DeviceId, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags
+) on DeviceId
+// Confidence and severity
+| extend
+    LocalConfidence = 70
+        + iif(DeviceCategory =~ "Server", 5, 0)
+        + iif(ExposureLevel =~ "High", 5, 0),
+    CombinedConfidence = toint((LocalConfidence + AvgTIConfidence) / 2)
+| extend
+    Severity = case(
+        CombinedConfidence >= 85, "CRITICAL",
+        CombinedConfidence >= 70, "HIGH",
+        "MEDIUM"
+    ),
+    MITRE_Tactics    = "TA0003 Persistence, TA0005 Defense Evasion, TA0009 Collection",
+    MITRE_Techniques = "T1176 Browser Extensions, T1112 Modify Registry"
+// Hunter directives
+| extend HuntingDirectives = pack_array(
+    strcat("1) Device '", DeviceName, "' has MISP-flagged extension ID: ", ExtensionID),
+    strcat("2) Threat context: ", AnyThreatType, " | ", AnyDescription, " | Tags: ", tostring(AnyTags)),
+    strcat("3) Install process: ", SampleInstaller, " | CmdLine: ", SampleInstallCommand),
+    strcat("4) Files: ", tostring(ExampleFileName), " in ", tostring(ExampleFolderPath)),
+    strcat("5) Policy keys: ", tostring(ExampleRegistryKey), " = ", tostring(ExampleRegistryValue)),
+    "6) Validate whether extension is required by business; if not, remove and block via policy.",
+    "7) Pivot: search for browser data exfil, token theft, or OAuth consent anomalies from same user.",
+    "8) Record sightings and enrich MISP with local context."
+)
+| project FirstSeen,LastSeen,EventCount,Severity,CombinedConfidence,
+          DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,
+          ExtensionID,ExampleFileName,ExampleFolderPath,
+          ExampleRegistryKey,ExampleRegistryValue,
+          SampleInstaller,SampleInstallCommand,
+          AnyThreatType,AnyDescription,AnyTags,
+          MITRE_Tactics,MITRE_Techniques,HuntingDirectives
+| order by Severity desc, LastSeen desc
