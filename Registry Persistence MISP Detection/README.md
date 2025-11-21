@@ -6,8 +6,8 @@
 **Coverage:** Windows Registry Persistence • COM Hijack • IFEO • LSA/SSP • AppInit_DLLs • Services  
 **MITRE:** TA0003 (Persistence) • TA0002 (Execution) • TA0005 (Defense Evasion)
 <kbd>
-**NOTE: Rule created over months of alert detections and IR cases**
 </kbd>
+**NOTE: Rule created over months of alert detections and IR cases**
 
 ---
 
