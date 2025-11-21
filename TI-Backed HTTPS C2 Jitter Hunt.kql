@@ -1,0 +1,99 @@
+// ============================================================================
+// Rule Name: TI-Backed HTTPS C2 Jitter Hunt (MISP Enriched)
+// Author: Ala Dabat
+// Purpose:
+//   Detect HTTPS C2 beaconing with jitter *only* when RemoteIP/Domain matches
+//   MISP-imported C2 infrastructure (domains/IPs), to keep noise extremely low.
+// Data Sources: DeviceNetworkEvents, ThreatIntelligenceIndicator, DeviceInfo
+// MITRE: TA0011 Command and Control
+// CPU Notes:
+//   - Lookback: 24h
+//   - TI join is small (C2 indicators subset)
+//   - One summarize by DeviceId + Indicator
+// ============================================================================
+
+let lookback = 24h;
+let min_connections = 10;
+
+// MISP C2 infra (domains/IPs)
+let MISP_C2_Infra =
+ThreatIntelligenceIndicator
+| where Active == true
+| where ThreatType has_any ("c2","command-and-control","beacon") or Description has "C2"
+| where IndicatorType in ("ipv4-addr","domain-name","url")
+| project IndicatorId, IndicatorType, IndicatorValue, ThreatType, Description, Tags, ConfidenceScore;
+
+// Network flows to TI C2 indicators
+let C2Flows =
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where RemotePort == 443 and Protocol == "Tcp"
+| extend RemoteHost = tostring(RemoteUrl)
+| join kind=inner (
+    MISP_C2_Infra
+    | where IndicatorType in ("ipv4-addr","domain-name")
+) on $left.RemoteIP == $right.IndicatorValue or $left.RemoteHost == $right.IndicatorValue
+| project Timestamp, DeviceId, DeviceName, RemoteIP, RemoteHost, RemotePort,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          IndicatorId, IndicatorValue, ThreatType, Description, Tags, TIC_Confidence = ConfidenceScore;
+
+// Jitter / beacon pattern check
+C2Flows
+| sort by DeviceId, IndicatorId, Timestamp asc
+| extend PrevTime = prev(Timestamp, 1, Timestamp)
+| extend IntervalSeconds = toreal(datetime_diff("second", Timestamp, PrevTime))
+| where IntervalSeconds > 0
+| summarize
+    ConnectionCount       = count(),
+    AvgIntervalSeconds    = avg(IntervalSeconds),
+    MinIntervalSeconds    = min(IntervalSeconds),
+    MaxIntervalSeconds    = max(IntervalSeconds),
+    IntervalStdDevSeconds = stdev(IntervalSeconds),
+    SampleProcessName     = any(InitiatingProcessFileName),
+    SampleProcessCommand  = any(InitiatingProcessCommandLine),
+    FirstSeen             = min(Timestamp),
+    LastSeen              = max(Timestamp),
+    C2_IndicatorValue     = any(IndicatorValue),
+    C2_ThreatType         = any(ThreatType),
+    C2_Description        = any(Description),
+    C2_Tags               = any(Tags),
+    AvgTIConfidence       = avg(TIC_Confidence)
+  by DeviceId, DeviceName, RemoteIP, RemoteHost, IndicatorId
+| where ConnectionCount >= min_connections
+| where AvgIntervalSeconds between (20 .. 1800)
+| where IntervalStdDevSeconds between (5 .. 900)
+// Device context + severity
+| join kind=leftouter (
+    DeviceInfo
+    | project DeviceId, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags
+) on DeviceId
+| extend
+    LocalConfidence = 70
+        + iif(DeviceCategory =~ "Server", 10, 0)
+        + iif(ExposureLevel =~ "High", 10, 0),
+    CombinedConfidence = toint((LocalConfidence + AvgTIConfidence) / 2)
+| extend
+    Severity = case(
+        CombinedConfidence >= 85, "CRITICAL",
+        CombinedConfidence >= 70, "HIGH",
+        "MEDIUM"
+    ),
+    MITRE_Tactics    = "TA0011 Command and Control",
+    MITRE_Techniques = "T1071.001 Web Protocols"
+// Hunter directives
+| extend HuntingDirectives = pack_array(
+    strcat("1) Confirm C2 beacon from device '", DeviceName, "' to ", C2_IndicatorValue, " (", RemoteIP, ")."),
+    strcat("2) Review process: ", SampleProcessName, " | CmdLine: ", SampleProcessCommand),
+    strcat("3) TI context: ", C2_ThreatType, " | Desc: ", C2_Description, " | Tags: ", tostring(C2_Tags)),
+    "4) Pivot over time window (FirstSeen..LastSeen) for file writes, registry changes, and lateral movement.",
+    "5) Contain host, block C2 at firewall/proxy, and capture memory image if feasible.",
+    "6) Feed confirmed findings back into MISP as sightings with enrichment."
+)
+| project FirstSeen,LastSeen,ConnectionCount,Severity,CombinedConfidence,
+          DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,
+          RemoteIP,RemoteHost,
+          C2_IndicatorValue,C2_ThreatType,C2_Description,C2_Tags,
+          AvgIntervalSeconds,IntervalStdDevSeconds,
+          SampleProcessName,SampleProcessCommand,
+          MITRE_Tactics,MITRE_Techniques,HuntingDirectives
+| order by Severity desc, LastSeen desc
