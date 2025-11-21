@@ -1,0 +1,80 @@
+// ============================================================================
+// Rule Name: MISP-Enriched CVE Campaign Infrastructure Hunt (2024–2025)
+// Author: Ala Dabat
+// Purpose:
+//   Identify endpoints contacting infrastructure associated with actively
+//   exploited CVEs from 2024–2025 (per MISP / KEV-tagged indicators).
+//   High-fidelity, campaign-level visibility.
+// Data Sources: DeviceNetworkEvents, ThreatIntelligenceIndicator, DeviceInfo
+// MITRE: TA0001 Initial Access, TA0002 Execution, TA0008 Lateral Movement
+// CPU Notes:
+//   - TI subset is filtered to year and CVE tags (small set).
+//   - Single join and summarize, 7d lookback.
+// ============================================================================
+
+let lookback = 7d;
+
+// Pull MISP indicators tagged with CVEs 2024–2025 and "kev" / "exploited"
+let MISP_CVE_Infra =
+ThreatIntelligenceIndicator
+| where Active == true
+| where Tags has_any ("kev","known-exploited","cisa-kev")
+| where Description has_any ("CVE-2024","CVE-2025")
+| where IndicatorType in ("ipv4-addr","domain-name","url")
+| project IndicatorId, IndicatorType, IndicatorValue, Description, ThreatType, Tags, ConfidenceScore;
+
+// Match outbound network events to that infrastructure
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| extend RemoteHost = tostring(RemoteUrl)
+| join kind=inner (
+    MISP_CVE_Infra
+) on $left.RemoteIP == $right.IndicatorValue or $left.RemoteHost == $right.IndicatorValue
+| summarize
+    FirstSeen      = min(Timestamp),
+    LastSeen       = max(Timestamp),
+    ConnectionCount = count(),
+    DistinctPorts  = dcount(RemotePort),
+    SampleProcess  = any(InitiatingProcessFileName),
+    SampleCommand  = any(InitiatingProcessCommandLine),
+    AnyThreatType  = any(ThreatType),
+    AnyDescription = any(Description),
+    AnyTags        = any(Tags),
+    AvgTIConfidence = avg(ConfidenceScore)
+  by DeviceId, DeviceName, RemoteIP, RemoteHost, IndicatorId
+// Join device context
+| join kind=leftouter (
+    DeviceInfo
+    | project DeviceId, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags
+) on DeviceId
+// Confidence and severity
+| extend
+    LocalConfidence = 60
+        + iif(DeviceCategory =~ "Server", 10, 0)
+        + iif(ExposureLevel =~ "High", 10, 0),
+    CombinedConfidence = toint((LocalConfidence + AvgTIConfidence) / 2)
+| extend
+    Severity = case(
+        CombinedConfidence >= 85, "CRITICAL",
+        CombinedConfidence >= 70, "HIGH",
+        "MEDIUM"
+    ),
+    MITRE_Tactics    = "TA0001 Initial Access, TA0002 Execution, TA0008 Lateral Movement",
+    MITRE_Techniques = "T1190 Exploit Public-Facing Application, T1133 External Remote Services"
+// Hunter directives
+| extend HuntingDirectives = pack_array(
+    strcat("1) Device '", DeviceName, "' contacted CVE-campaign infra: ", RemoteIP, " / ", RemoteHost, "."),
+    strcat("2) Process: ", SampleProcess, " | CmdLine: ", SampleCommand),
+    strcat("3) TI: ", AnyThreatType, " | ", AnyDescription, " | Tags: ", tostring(AnyTags)),
+    "4) Check if vulnerable product exists on this host (SharePoint, Ivanti, Exchange, Git, etc.).",
+    "5) If applicable, validate patch status vs CVE list; if unpatched assume compromise.",
+    "6) Pivot: search for follow-on activity (new services, new users, lateral movement).",
+    "7) Feed confirmed incidents back into MISP as sightings."
+)
+| project FirstSeen,LastSeen,ConnectionCount,Severity,CombinedConfidence,
+          DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,
+          RemoteIP,RemoteHost,
+          AnyThreatType,AnyDescription,AnyTags,
+          SampleProcess,SampleCommand,
+          MITRE_Tactics,MITRE_Techniques,HuntingDirectives
+| order by Severity desc, LastSeen desc
