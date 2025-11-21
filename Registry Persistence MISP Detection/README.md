@@ -10,8 +10,9 @@
 
 ---
 
-**NOTE: Rule created over months of alert detections and IR cases**
-
+<kbd>
+**NOTE: Rule created over months of detections and incident response **
+</kbd>
 ## Overview
 
 This pack provides **high-fidelity, low-noise detection analytics** for registry-based persistence and configuration abuse.  
