@@ -1,0 +1,90 @@
+// =====================================================================================================
+// Browser Extension Installation — Engineering Detection Rule (Low CPU, No TI)
+// Author: Ala Dabat
+// Purpose: Detect installation or forced installation of Chrome/Edge browser extensions.
+//          Low-CPU design suitable for Sentinel Analytics Rule deployment.
+// -----------------------------------------------------------------------------------------------------
+// CPU Notes:
+//   - Only scans 7 days of DeviceFileEvents + DeviceRegistryEvents.
+//   - No environment-wide rarity counting (avoids heavy summarize dcount).
+//   - No external TI calls, no MISP/TI tables.
+//   - Single summarise at end (cheap).
+//   - DeviceInfo join is lightweight.
+// =====================================================================================================
+
+let lookback = 7d;
+
+let CRX_Installers =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType == "FileCreated" and FileName endswith ".crx"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})",1,FileName))
+| where isnotempty(ExtensionID)
+| extend InstallMethod = "CRXInstaller"
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessName     = InitiatingProcessFileName,
+          InstallingProcessCommand  = InitiatingProcessCommandLine,
+          FileName, FolderPath, SHA256,
+          InstallMethod, ExtensionID;
+
+let ExtensionFolders =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("FileCreated","FolderCreated")
+| where FolderPath has @"\User Data\" and FolderPath has @"\Extensions\"
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\",1,FolderPath))
+| where isnotempty(ExtensionID)
+| extend InstallMethod = "ExtensionFolder"
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessName     = InitiatingProcessFileName,
+          InstallingProcessCommand  = InitiatingProcessCommandLine,
+          FileName, FolderPath, SHA256,
+          InstallMethod, ExtensionID;
+
+let ManifestWrites =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName =~ "manifest.json"
+| where FolderPath has @"\User Data\" and FolderPath has @"\Extensions\"
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\",1,FolderPath))
+| where isnotempty(ExtensionID)
+| extend InstallMethod = "ManifestWrite"
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessName     = InitiatingProcessFileName,
+          InstallingProcessCommand  = InitiatingProcessCommandLine,
+          FileName, FolderPath, SHA256,
+          InstallMethod, ExtensionID;
+
+let ForcedPolicyInstalls =
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where RegistryKey has "ExtensionInstallForcelist"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})",1,tostring(RegistryValueData)))
+| where isnotempty(ExtensionID)
+| extend InstallMethod = "PolicyForceInstall"
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessName     = InitiatingProcessFileName,
+          InstallingProcessCommand  = InitiatingProcessCommandLine,
+          RegistryKey, RegistryValueData,
+          FileName="", FolderPath="", SHA256="",
+          InstallMethod, ExtensionID;
+
+// ------------------ Union + Context ------------------
+union CRX_Installers, ExtensionFolders, ManifestWrites, ForcedPolicyInstalls
+| join kind=leftouter (
+    DeviceInfo
+    | project DeviceId, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags
+) on DeviceId
+
+// ------------------ Summarise ------------------
+| summarize FirstSeen=min(Timestamp), LastSeen=max(Timestamp), EventCount=count(),
+            AnyFileName=any(FileName), AnyFolderPath=any(FolderPath), AnySHA256=any(SHA256),
+            SampleInstaller=arg_max(Timestamp, InstallingProcessName),
+            SampleCommand=arg_max(Timestamp, InstallingProcessCommand),
+            AnyRegistryKey=any(RegistryKey), AnyRegistryValue=any(RegistryValueData)
+            by DeviceName, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags,
+               InstallMethod, ExtensionID
+
+// ------------------ Output ------------------
+| project FirstSeen,LastSeen,EventCount,DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,InstallMethod,ExtensionID,AnyFileName,AnyFolderPath,AnyRegistryKey,AnyRegistryValue,AnySHA256,SampleInstaller,SampleCommand
+| order by LastSeen desc
