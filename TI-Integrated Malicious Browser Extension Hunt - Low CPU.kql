@@ -1,0 +1,72 @@
+// =====================================================================================================
+// Browser Extension Hunt — Low CPU, Native Hunter Version, MISP TI
+// Author: Ala Dabat
+// Purpose:
+//   Hunter-focused extension activity with inline MISP TI matching.
+//   No summarise, no rarity, no environment-wide operations.
+//   Cheap, scalable, pivot-friendly.
+// -----------------------------------------------------------------------------------------------------
+// CPU Notes:
+//   - Very low CPU.
+//   - TI join is cheap.
+//   - No counting, no summarisation, no multi-day environment analysis.
+// =====================================================================================================
+
+let lookback = 7d;
+
+// ------------------ MISP TI (extension IDs) ------------------
+let MISP_Extensions =
+ThreatIntelligenceIndicator
+| where Active == true
+| where IndicatorType == "browser-extension-id"
+| extend MISP_ExtensionID = tolower(IndicatorValue)
+| where MISP_ExtensionID matches regex @"^[a-z]{32}$"
+| project MISP_ExtensionID,ThreatDescription=Description,ThreatTags=Tags;
+
+// ------------------ Extension artifacts ------------------
+let CRX =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName endswith ".crx"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})",1,FileName))
+| where isnotempty(ExtensionID)
+| extend InstallMethod="CRXInstaller";
+
+let Folders =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FolderPath has @"\Extensions\"
+| where ActionType in ("FileCreated","FolderCreated")
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\",1,FolderPath))
+| where isnotempty(ExtensionID)
+| extend InstallMethod="ExtensionFolder";
+
+let Manifests =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where FileName =~ "manifest.json" and FolderPath has @"\Extensions\"
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\",1,FolderPath))
+| where isnotempty(ExtensionID)
+| extend InstallMethod="ManifestWrite";
+
+let Policy =
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where RegistryKey has "ExtensionInstallForcelist"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})",1,tostring(RegistryValueData)))
+| where isnotempty(ExtensionID)
+| extend InstallMethod="PolicyForceInstall";
+
+// ------------------ Union + Context + TI ------------------
+union CRX,Folders,Manifests,Policy
+| join kind=leftouter MISP_Extensions on ExtensionID == MISP_ExtensionID
+| join kind=leftouter (DeviceInfo | project DeviceId,DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags) on DeviceId
+| extend InstallingProcessName=InitiatingProcessFileName,
+         InstallingProcessCommand=InitiatingProcessCommandLine,
+         WebStore_Chrome=strcat("https://chrome.google.com/webstore/detail/",ExtensionID),
+         WebStore_Edge=strcat("https://microsoftedge.microsoft.com/addons/detail/",ExtensionID),
+         CRXcavator=strcat("https://crxcavator.io/report/",ExtensionID)
+
+// ------------------ Raw Hunter Output ------------------
+| project Timestamp,DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,InstallMethod,ExtensionID,FileName,FolderPath,RegistryKey,RegistryValueData,SHA256,InstallingProcessName,InstallingProcessCommand,ThreatDescription,ThreatTags,WebStore_Chrome,WebStore_Edge,CRXcavator
+| order by Timestamp desc
