@@ -1,0 +1,238 @@
+// =======================================================================================================
+// Browser Extension Threat Hunt — TI-Backed + Suspicious New Extension Detection
+// Author: Ala Dabat
+// Version: 2025-11
+// ---------------------------------------------------------------------------------------
+// PURPOSE
+// Modern intrusion chains increasingly abuse Chrome/Edge extensions for persistence,
+// data theft (credential harvesting, cookie/session exfiltration), C2, ad-fraud,
+// crypto-mining, proxy tunnels and forced policy-based persistence.
+//
+// This hunt does two things simultaneously:
+//   1) Detects browser extensions listed in an external malicious/suspicious feed
+//      (GitHub CSV list).
+//   2) Detects NEW and SUSPICIOUS extensions that are *not* in the feed but show
+//      behavioural patterns used in real intrusions (rare installs, risky loaders,
+//      policy-force injection, abnormal install patterns).
+//
+// You get true TI-backed hits *plus* anomaly-based scoring to surface unknown threats.
+//
+// ---------------------------------------------------------------------------------------
+// CPU / PERFORMANCE NOTES
+// - Medium CPU cost: the rule touches DeviceFileEvents + DeviceRegistryEvents over
+//   ~14 days and calculates environment rarity over 30 days.
+// - Joins are cheap because key = 32-char extension IDs.
+// - DeviceInfo join and allowlist joins are lightweight.
+// - The largest cost is the rarity summarize over environment. In large tenants,
+//   reduce rarity_window to 7 days to reduce pressure.
+//
+// This is production-ready. Run hourly or every 4h in Sentinel.
+// =======================================================================================================
+
+
+// -------------------------------- PARAMETERS --------------------------------
+let lookback          = 14d;
+let rarity_window     = 30d;
+let feed_url          = "https://raw.githubusercontent.com/mthcht/awesome-lists/refs/heads/main/Lists/Browser%20Extensions/browser_extensions_list.csv";
+let exclude_types     = dynamic(["sensitive","deceptive"]);  // optionally ignore categories
+let ApprovedExtensionsWatchlist   = "ApprovedBrowserExtensions"; // ExtensionID, Reason
+let ApprovedForceInstallWatchlist = "ApprovedForceInstall";      // ExtensionID, Reason
+
+let HighRiskInstallLoaders = dynamic([
+    "powershell.exe","wscript.exe","cscript.exe","mshta.exe","rundll32.exe","cmd.exe",
+    "curl.exe","bitsadmin.exe","certutil.exe"
+]);
+
+
+// ----------------------- EXTERNAL TI FEED (from GitHub CSV) -----------------------
+let MaliciousExtensions =
+materialize(
+    externaldata(
+        ti_extension_name:string,
+        ti_extension_id:string,
+        ti_category:string,
+        ti_type:string,
+        ti_link:string,
+        ti_comment:string
+    )
+    [feed_url]
+    with (format="csv", ignoreFirstRecord=true)
+    | extend ExtensionID = tolower(trim(" ", ti_extension_id))
+    | where ExtensionID matches regex @"^[a-z]{32}$"
+    | where tolower(ti_type) !in (exclude_types)
+    | project ExtensionID, ti_extension_name, ti_category, ti_type, ti_link, ti_comment
+);
+
+
+// ------------------------------- ALLOWLISTS ---------------------------------
+let ApprovedExt =
+    (_GetWatchlist(ApprovedExtensionsWatchlist)
+    | project AllowedID = tolower(tostring(ExtensionID)), AllowedReason = tostring(Reason));
+
+let ApprovedForce =
+    (_GetWatchlist(ApprovedForceInstallWatchlist)
+    | project AllowedID = tolower(tostring(ExtensionID)), AllowedReason = tostring(Reason));
+
+
+// =======================================================================================
+// ARTIFACT CAPTURE SECTION (CRX drops, extension folders, manifest writes, policy-forced)
+// =======================================================================================
+
+
+// --------------------------- 1. CRX Installer Drops ---------------------------
+let CrxInstallerDrops =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType == "FileCreated" and FileName endswith ".crx"
+| extend ExtensionID = tolower(extract(@"([a-z]{32})", 1, FileName))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessFileName   = InitiatingProcessFileName,
+          InstallingProcessCommand    = InitiatingProcessCommandLine,
+          FileName, FolderPath, FileSHA256 = SHA256,
+          ArtifactType = "CRX_Installer", ExtensionID;
+
+
+// --------------------------- 2. Extension Folder Creation ---------------------
+let ExtensionFolderCreation =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("FileCreated","FolderCreated")
+| where FolderPath has @"\User Data\" and FolderPath has @"\Extensions\"
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\", 1, FolderPath))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessFileName   = InitiatingProcessFileName,
+          InstallingProcessCommand    = InitiatingProcessCommandLine,
+          FileName, FolderPath, FileSHA256 = SHA256,
+          ArtifactType = "Extension_Folder", ExtensionID;
+
+
+// --------------------------- 3. Manifest.json Writes --------------------------
+let ManifestWrites =
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("FileCreated","FileModified")
+| where FileName =~ "manifest.json"
+| where FolderPath has @"\User Data\" and FolderPath has @"\Extensions\"
+| extend ExtensionID = tolower(extract(@"\\Extensions\\([a-z]{32})\\", 1, FolderPath))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessFileName   = InitiatingProcessFileName,
+          InstallingProcessCommand    = InitiatingProcessCommandLine,
+          FileName, FolderPath, FileSHA256 = SHA256,
+          ArtifactType = "Manifest_Write", ExtensionID;
+
+
+// --------------------------- 4. Policy Force-Install (Persistence) ------------
+let PolicyForceInstall =
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("RegistryValueSet","RegistryValueAdded")
+| where (RegistryKey startswith @"HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"
+     or  RegistryKey startswith @"HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist")
+| extend ExtensionID = tolower(extract(@"([a-z]{32})", 1, tostring(RegistryValueData)))
+| where isnotempty(ExtensionID)
+| project Timestamp, DeviceId, DeviceName,
+          InstallingProcessFileName   = InitiatingProcessFileName,
+          InstallingProcessCommand    = InitiatingProcessCommandLine,
+          RegistryKey, RegistryValueData,
+          ArtifactType = "Policy_ForceInstall", ExtensionID;
+
+
+// --------------------------- UNION ALL ARTIFACTS ------------------------------
+let RawArtifacts = union CrxInstallerDrops, ExtensionFolderCreation, ManifestWrites, PolicyForceInstall;
+
+
+// --------------------------- ENVIRONMENT RARITY --------------------------------
+let EnvRarity =
+RawArtifacts
+| where Timestamp >= ago(rarity_window)
+| summarize EnvInstallCount = dcount(DeviceId),
+            FirstSeenGlobal = min(Timestamp)
+            by ExtensionID;
+
+
+// =======================================================================================
+// MAIN PIPELINE
+// =======================================================================================
+RawArtifacts
+| join kind=leftouter MaliciousExtensions on ExtensionID
+| join kind=leftouter EnvRarity          on ExtensionID
+| join kind=leftouter (
+    DeviceInfo | project DeviceId, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags
+) on DeviceId
+| join kind=leftouter ApprovedExt  on ExtensionID == AllowedID
+| join kind=leftouter ApprovedForce on ExtensionID == AllowedID
+
+// --------------------- CLASSIFICATION LOGIC ---------------------
+| extend
+    RepoHit       = isnotempty(ti_extension_name),
+    Allowlisted   = isnotempty(ApprovedExt.AllowedID) or isnotempty(ApprovedForce.AllowedID),
+
+    RarityScore   = case(EnvInstallCount <= 2, 2, EnvInstallCount <= 10, 1, 0),
+    NewScore      = iif(FirstSeenGlobal >= ago(7d), 1, 0),
+    LoaderScore   = iif(InstallingProcessFileName in (HighRiskInstallLoaders), 1, 0),
+    ForceScore    = iif(ArtifactType == "Policy_ForceInstall", 2, 0),
+    ExposureScore = case(ExposureLevel =~ "High",2, ExposureLevel =~ "Medium",1,0),
+    TI_BaseScore  = iif(RepoHit and !Allowlisted, 3, 0),
+
+    SuspiciousNew =
+        (RepoHit == false and Allowlisted == false and RarityScore >= 1 and
+         (LoaderScore >= 1 or ForceScore >= 2 or ExposureScore >= 1)),
+
+    ExtensionClass =
+        case(
+            RepoHit and !Allowlisted,   "KNOWN_MALICIOUS",
+            Allowlisted,                "APPROVED_EXTENSION",
+            SuspiciousNew,              "SUSPICIOUS_NEW_EXTENSION",
+            !RepoHit and RarityScore>0, "NEW_EXTENSION",
+                                        "OTHER"
+        ),
+
+    SeverityNumber =
+        1 + TI_BaseScore + RarityScore + NewScore + LoaderScore + ForceScore + ExposureScore,
+
+    Severity =
+        case(
+            SeverityNumber >= 7, "CRITICAL",
+            SeverityNumber >= 5, "HIGH",
+            SeverityNumber >= 3, "MEDIUM",
+                                "LOW"
+        ),
+
+// -------------------- Enrichment URLs --------------------
+    ChromeStoreURL = strcat("https://chrome.google.com/webstore/detail/", iif(isempty(ti_extension_name),"unknown",ti_extension_name), "/", ExtensionID),
+    EdgeStoreURL   = strcat("https://microsoftedge.microsoft.com/addons/detail/", iif(isempty(ti_extension_name),"unknown",ti_extension_name), "/", ExtensionID),
+    CRXcavatorURL  = strcat("https://crxcavator.io/report/", ExtensionID),
+    VirusTotalURL  = iif(isnotempty(FileSHA256), strcat("https://www.virustotal.com/gui/file/", FileSHA256), ""),
+
+    MITRE_Tactics    = "TA0003 Persistence | TA0005 Defense Evasion | TA0009 Collection | TA0010 Exfiltration",
+    MITRE_Techniques = iif(ArtifactType == "Policy_ForceInstall","T1053/T1112 Policy Abuse | T1546 Event-Triggered Execution","T1176 Browser Extensions | T1112 Modify Registry")
+
+// =======================================================================================
+// SUMMARIZE PER DEVICE + EXTENSION AND PROJECT EVERYTHING ON ONE LINE
+// =======================================================================================
+| summarize
+    FirstSeen        = min(Timestamp),
+    LastSeen         = max(Timestamp),
+    EventCount       = count(),
+    GlobalInstallers = any(EnvInstallCount),
+    GlobalFirstSeen  = any(FirstSeenGlobal),
+    LoaderProcess    = arg_max(Timestamp, InstallingProcessFileName),
+    LoaderCommand    = arg_max(Timestamp, InstallingProcessCommand),
+    FileExample      = any(FileName),
+    FolderExample    = any(FolderPath),
+    RegistryExample  = any(RegistryKey),
+    RegistryValueEx  = any(RegistryValueData),
+    SampleSHA256     = any(FileSHA256)
+    by DeviceId, DeviceName, OSPlatform, DeviceCategory, ExposureLevel, DeviceTags,
+       ExtensionID, ti_extension_name, ti_category, ti_type, ti_link, ti_comment,
+       ArtifactType, ExtensionClass, Severity,
+       ChromeStoreURL, EdgeStoreURL, CRXcavatorURL, VirusTotalURL,
+       MITRE_Tactics, MITRE_Techniques
+
+// -------------------------------- OUTPUT ---------------------------------
+| where ExtensionClass in ("KNOWN_MALICIOUS","SUSPICIOUS_NEW_EXTENSION")
+| project FirstSeen,LastSeen,EventCount,Severity,ExtensionClass,DeviceName,OSPlatform,DeviceCategory,ExposureLevel,DeviceTags,ArtifactType,ExtensionName=ti_extension_name,ExtensionID,TI_Category=ti_category,TI_Type=ti_type,TI_Comment=ti_comment,TI_Link=ti_link,GlobalInstallers,GlobalFirstSeen,LoaderProcess,LoaderCommand,FileExample,FolderExample,RegistryExample,RegistryValueEx,SampleSHA256,ChromeStoreURL,EdgeStoreURL,CRXcavatorURL,VirusTotalURL,MITRE_Tactics,MITRE_Techniques
+| order by Severity desc, LastSeen desc
