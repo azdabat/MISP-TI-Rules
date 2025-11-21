@@ -1,4 +1,4 @@
-# 🧬 MISP-Enriched Registry Persistence Detection  
+#  MISP-Enriched Registry Persistence Detection  
 **Platform:** MDE / Microsoft Sentinel  
 **Author:** Ala Dabat  
 **Type:** Adaptive, CTI-aware Detection (Registry Persistence + MISP Intelligence)  
@@ -7,7 +7,7 @@
 
 ---
 
-## 📌 What This Detection Is
+##  What This Detection Is
 
 This analytic is an *adaptive*, *weighted*, *threat-intelligence-enriched* registry persistence detector, designed for:
 
@@ -28,7 +28,7 @@ This creates a **CTI fusion detection** that responds dynamically to new MISP da
 
 ---
 
-# 🎯 What This Rule Detects (High Fidelity)
+#  What This Rule Detects (High Fidelity)
 
 | Detection Category | Supported | Explanation |
 |--------------------|----------:|-------------|
@@ -47,7 +47,7 @@ This creates a **CTI fusion detection** that responds dynamically to new MISP da
 
 ---
 
-# 🔥 **What It Would Catch in Real Supply-Chain Attacks**
+#  **What It Would Catch in Real Supply-Chain Attacks**
 
 ## ✔ 3CX Supply Chain (2023)
 Payload: **DLL loader-side persistence** using Run keys + sideloaded DLL communication.
@@ -117,7 +117,7 @@ Payload: attacker pivots from compromised appliance → Windows estate.
 
 ---
 
-# ❌ What This Rule Cannot Detect (By Design)
+# What This Rule Cannot Detect (By Design)
 
 | Miss | Reason |
 |------|--------|
