@@ -13,8 +13,8 @@
 <kbd>
 </kbd>
 
-**NOTE: Rule created over months of detections and incident response **
-
+> [!NOTE]
+> **Rule created over months of threat detections and incident response**
 ## Overview
 
 This pack provides **high-fidelity, low-noise detection analytics** for registry-based persistence and configuration abuse.  
